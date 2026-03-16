@@ -1,106 +1,235 @@
-# haskell-devcontainer-template
+# monad-rail
 
-A devcontainer template for Haskell development.
+[![Hackage](https://img.shields.io/hackage/v/monad-rail.svg)](https://hackage.haskell.org/package/monad-rail)
+[![License: BSD-3-Clause](https://img.shields.io/badge/License-BSD--3--Clause-blue.svg)](LICENSE)
 
-## What's included
+Railway-Oriented error handling for Haskell.
 
-### Haskell Toolchain
+`monad-rail` implements [Railway-Oriented Programming (ROP)](https://fsharpforfunandprofit.com/rop/) — a functional pattern that makes error handling explicit and composable. Your computation runs on two tracks: success and failure. Once on the failure track, execution stops — unless you use `<!>` to run multiple validations in parallel and collect all their errors at once.
 
-| Tool | Version |
-| --- | --- |
-| GHC | 9.10.3 |
-| Cabal | 3.12.1.0 |
-| Stack | latest |
-| GHCup | latest |
+## Installation
 
-### Developer Tools
+Add to your `.cabal` file:
 
-- **[HLS](https://github.com/haskell/haskell-language-server)** — Haskell Language Server for IDE features (completions, type hints, go-to-definition)
-- **[Hoogle](https://hoogle.haskell.org/)** — Local Haskell API search database, pre-generated at build time
-- **[Ormolu](https://github.com/tweag/ormolu)** — Opinionated, deterministic code formatter
-- **[fast-tags](https://github.com/elaforge/fast-tags)** — Fast tag file generator for Haskell source
-- **[cabal-gild](https://github.com/tfausak/cabal-gild)** — Formatter and linter for `.cabal` files
-- **[direnv](https://direnv.net/)** — Per-directory environment variable loading, hooked into both `bash` and `zsh`
-
-**Shell:** Zsh (default)
-
-**System tools:** `build-essential`, `curl`, `git`, `pkg-config`, `libffi-dev`, `libgmp-dev`, `libssl-dev`, `zlib1g-dev`, `direnv`, `socat`, `procps`
-
-**VS Code extensions installed automatically:**
-
-- [Haskell](https://marketplace.visualstudio.com/items?itemName=haskell.haskell) — HLS integration
-- [Haskell Syntax Highlighting](https://marketplace.visualstudio.com/items?itemName=justusadam.language-haskell)
-- [GHCi](https://marketplace.visualstudio.com/items?itemName=eriksik2.vscode-ghci)
-- [direnv](https://marketplace.visualstudio.com/items?itemName=mkhl.direnv)
-- [Error Lens](https://marketplace.visualstudio.com/items?itemName=usernamehw.errorlens)
-- [EditorConfig](https://marketplace.visualstudio.com/items?itemName=editorconfig.editorconfig)
-- [Markdown All in One](https://marketplace.visualstudio.com/items?itemName=yzhang.markdown-all-in-one)
-- [markdownlint](https://marketplace.visualstudio.com/items?itemName=davidanson.vscode-markdownlint)
-- [Claude Code for VS Code](https://marketplace.visualstudio.com/items?itemName=anthropic.claude-code)
-- [Haskell GHCi Debug Adapter Phoityne](https://marketplace.visualstudio.com/items?itemName=phoityne.phoityne-vscode)
-
-## Prerequisites
-
-- [Docker](https://www.docker.com/products/docker-desktop)
-- [VS Code](https://code.visualstudio.com/) with the [Dev Containers extension](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers)
-
-For terminal-based usage (see below), you also need:
-
-- [Node.js](https://nodejs.org/)
-- [Dev Container CLI](https://github.com/devcontainers/cli): `npm install -g @devcontainers/cli`
-
-## Using this template
-
-### With VS Code
-
-1. Click **Use this template** on GitHub to create a new repository from this template.
-2. Clone your new repository and open it in VS Code.
-3. When prompted, click **Reopen in Container** (or run the command `Dev Containers: Reopen in Container`).
-4. The container will start using the pre-built Docker image and run the post-creation setup automatically. This should complete in just a few minutes.
-
-### From the terminal
-
-A helper script [`open-devcontainer.sh`](open-devcontainer.sh) is provided for launching the devcontainer directly from the console using the [Dev Container CLI](https://github.com/devcontainers/cli).
-
-**Start the container and open a shell:**
-
-```bash
-./open-devcontainer.sh
+```cabal
+build-depends:
+  monad-rail ^>=0.1.0.0
 ```
 
-The script will:
+## Quick Start
 
-1. Verify that Node.js and the Dev Container CLI are installed.
-2. Start the container (`devcontainer up`).
-3. Open an interactive shell inside the container (prefers `zsh`, falls back to `bash`).
-4. Prompt you to shut down the container when you exit.
+### 1. Define your error type
 
-**Rebuild the image before starting:**
+```haskell
+import Monad.Rail
 
-```bash
-./open-devcontainer.sh -r
+data UserError
+  = NameEmpty
+  | EmailInvalid
+  | AgeTooLow
+  deriving (Show)
+
+instance IsApplicationError UserError where
+  getErrorInfo NameEmpty =
+    ApplicationErrorInfo
+      { publicMessage   = "Name cannot be empty"
+      , internalMessage = Nothing
+      , code            = "USER_NAME_EMPTY"
+      , severity        = Error
+      , exception       = Nothing
+      , details         = Nothing
+      , requestInfo     = Nothing
+      }
+  getErrorInfo EmailInvalid =
+    ApplicationErrorInfo
+      { publicMessage   = "Invalid email format"
+      , internalMessage = Nothing
+      , code            = "USER_EMAIL_INVALID"
+      , severity        = Error
+      , exception       = Nothing
+      , details         = Nothing
+      , requestInfo     = Nothing
+      }
+  getErrorInfo AgeTooLow =
+    ApplicationErrorInfo
+      { publicMessage   = "Must be at least 18 years old"
+      , internalMessage = Nothing
+      , code            = "USER_AGE_TOO_LOW"
+      , severity        = Error
+      , exception       = Nothing
+      , details         = Nothing
+      , requestInfo     = Nothing
+      }
 ```
 
-Use the `-r` flag to force a rebuild of the container image before starting. This is useful after modifying the Dockerfile or `devcontainer.json`.
+### 2. Write your validations
 
-## Project structure
+```haskell
+validateName :: String -> Rail ()
+validateName name
+  | null name = throwError (ApplicationError NameEmpty)
+  | otherwise = pure ()
 
-```text
-.
-├── .devcontainer/
-│   ├── devcontainer.json   # Dev container configuration
-│   ├── docker-compose.yml  # App services (uses pre-built Docker image)
-├── .editorconfig           # Consistent editor formatting rules
-└── .gitignore              # Haskell, Cabal, and VS Code ignores
+validateEmail :: String -> Rail ()
+validateEmail email
+  | '@' `notElem` email = throwError (ApplicationError EmailInvalid)
+  | otherwise = pure ()
+
+validateAge :: Int -> Rail ()
+validateAge age
+  | age < 18  = throwError (ApplicationError AgeTooLow)
+  | otherwise = pure ()
 ```
 
-## Customising the template
+### 3. Accumulate errors with `<!>`
 
-This template uses a pre-built Docker image from [ivelten/haskell-devcontainer](https://hub.docker.com/r/ivelten/haskell-devcontainer) on Docker Hub. The image includes GHC 9.10.3, Cabal 3.12.1.0, and all developer tools listed above.
+```haskell
+validateUser :: String -> String -> Int -> Rail ()
+validateUser name email age = do
+  validateName name <!> validateEmail email <!> validateAge age
+  -- All three run regardless of failure.
+  -- If any fail, ALL errors are collected before stopping.
+  saveUser name email age
+```
 
-**For most projects:** The pre-configured environment should work as-is. You can:
+### 4. Run and handle results
 
-- Create a `cabal.project` and `.cabal` package file at the root of the repository after cloning the template.
-- Add a `.envrc` file to the project root for per-project environment variables (direnv is pre-installed and hooked into both Bash and Zsh).
+```haskell
+main :: IO ()
+main = do
+  result <- runRail (validateUser "" "not-an-email" 16)
+  case result of
+    Right () ->
+      putStrLn "User saved!"
+    Left errors ->
+      -- Prints all 3 errors as a JSON array
+      print errors
+```
 
-**To customize the toolchain:** If you need different versions of GHC, Cabal, or other tools, you can build your own Docker image. Fork the [haskell-devcontainer](https://github.com/ivelten/haskell-devcontainer) repository and modify the Dockerfile, then update `docker-compose.yml` to reference your custom image.
+Output:
+
+```json
+[
+  {"message":"Name cannot be empty","code":"USER_NAME_EMPTY","exception":null,"details":null},
+  {"message":"Invalid email format","code":"USER_EMAIL_INVALID","exception":null,"details":null},
+  {"message":"Must be at least 18 years old","code":"USER_AGE_TOO_LOW","exception":null,"details":null}
+]
+```
+
+## Core Concepts
+
+### `Rail a`
+
+The main type alias for railway computations:
+
+```haskell
+type Rail a = RailT RailError IO a
+```
+
+Use `RailT` directly if you need a different base monad.
+
+### `throwError`
+
+Moves execution to the failure track with a single error:
+
+```haskell
+throwError :: ApplicationError -> RailT RailError m a
+```
+
+All subsequent steps in the `do`-block are skipped.
+
+### `<!>` (error accumulation)
+
+The key operator for Railway-Oriented Programming. Runs **both** sides regardless of failure and combines the errors:
+
+| Left | Right | Result |
+| --- | --- | --- |
+| `Right` | `Right` | `Right` — continue |
+| `Left e1` | `Right` | `Left e1` — stop |
+| `Right` | `Left e2` | `Left e2` — stop |
+| `Left e1` | `Left e2` | `Left (e1 <> e2)` — stop, both errors |
+
+Ideal for form validation, configuration checks, and any scenario where you want to report all problems at once.
+
+### `runRail`
+
+Executes the computation and returns `Either RailError a`:
+
+```haskell
+runRail :: Rail a -> IO (Either RailError a)
+```
+
+### `IsApplicationError`
+
+Typeclass connecting your domain error types to the standard error format:
+
+```haskell
+class IsApplicationError e where
+  getErrorInfo :: e -> ApplicationErrorInfo
+```
+
+### `ApplicationErrorInfo`
+
+Holds all metadata for an error. Fields are split by visibility:
+
+| Field | JSON | Purpose |
+| --- | --- | --- |
+| `publicMessage` | ✅ as `"message"` | Safe to show end users |
+| `code` | ✅ | Machine-readable identifier |
+| `exception` | ✅ as string | Underlying exception, if any |
+| `details` | ✅ | Extra JSON context (user ID, resource ID, etc.) |
+| `internalMessage` | ❌ | Sensitive details for logs only |
+| `severity` | ❌ | `Error` or `Critical`, for monitoring |
+| `requestInfo` | ❌ | Raw request data, for debugging only |
+
+Fields marked ❌ are intentionally excluded from JSON serialization to prevent accidental exposure in API responses.
+
+### Error Severity
+
+```haskell
+data ErrorSeverity = Error | Critical
+```
+
+Use `Critical` for errors that need immediate attention (e.g., data corruption, infrastructure failures). Use `Error` for recoverable application-level failures.
+
+## Combining Errors from Different Sources
+
+`ApplicationError` is an existential wrapper, so you can mix error types freely:
+
+```haskell
+data DbError = ConnectionFailed deriving (Show)
+
+instance IsApplicationError DbError where
+  getErrorInfo ConnectionFailed = ApplicationErrorInfo
+    { publicMessage   = "Service temporarily unavailable"
+    , internalMessage = Just "Postgres replica at 10.0.0.5:5432 unreachable"
+    , code            = "DB_CONNECTION_FAILED"
+    , severity        = Critical
+    , exception       = Nothing
+    , details         = Nothing
+    , requestInfo     = Nothing
+    }
+
+pipeline :: Rail ()
+pipeline = do
+  validateName name <!> validateEmail email  -- UserError
+  fetchFromDb                                -- DbError
+```
+
+## JSON Serialization
+
+`RailError` implements `ToJSON` via `aeson`. A failed computation serializes as a JSON array of error objects:
+
+```haskell
+import Data.Aeson (encode)
+import qualified Data.ByteString.Lazy.Char8 as BS
+
+result <- runRail myRail
+case result of
+  Left errors -> BS.putStrLn (encode errors)
+  Right _     -> pure ()
+```
+
+## License
+
+[BSD-3-Clause](LICENSE) © 2026 Ismael Carlos Velten

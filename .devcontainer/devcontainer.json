@@ -27,7 +27,7 @@
     }
   },
   "remoteUser": "vscode",
-  "postStartCommand": "bash .devcontainer/direnv-setup.sh",
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
   "features": {
     "ghcr.io/devcontainers/features/common-utils:2": {
       "installZsh": true,

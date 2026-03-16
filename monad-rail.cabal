@@ -30,6 +30,15 @@ category: Control
 build-type: Simple
 extra-doc-files: CHANGELOG.md
 
+source-repository head
+  type:     git
+  location: https://github.com/ivelten/monad-rail
+
+source-repository this
+  type:     git
+  location: https://github.com/ivelten/monad-rail
+  tag:      v0.1.0.0
+
 common warnings
   ghc-options: -Wall
 
@@ -55,6 +64,17 @@ test-suite monad-rail-test
   type: exitcode-stdio-1.0
   hs-source-dirs: test
   main-is: Main.hs
+  build-tool-depends: hspec-discover:hspec-discover ^>=2.11
+  other-modules:
+    Monad.Rail.ErrorSpec
+    Monad.Rail.TypesSpec
+    Spec
+
   build-depends:
+    QuickCheck ^>=2.15,
+    aeson ^>=2.2.3.0,
     base ^>=4.17 || ^>=4.18 || ^>=4.19 || ^>=4.20,
+    bytestring ^>=0.12,
+    hspec ^>=2.11,
     monad-rail,
+    text ^>=2.1.3,
