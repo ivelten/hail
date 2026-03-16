@@ -15,8 +15,8 @@
 --
 -- >>> data UserError = NameEmpty | EmailInvalid
 -- >>> instance IsApplicationError UserError where
--- >>>   errorInfo NameEmpty = ApplicationErrorInfo "Name cannot be empty" "USER_NAME_EMPTY" Error Nothing
--- >>>   errorInfo EmailInvalid = ApplicationErrorInfo "Email is invalid" "USER_EMAIL_INVALID" Error Nothing
+-- >>>   getErrorInfo NameEmpty = ApplicationErrorInfo "Name cannot be empty" "USER_NAME_EMPTY" Error Nothing
+-- >>>   getErrorInfo EmailInvalid = ApplicationErrorInfo "Email is invalid" "USER_EMAIL_INVALID" Error Nothing
 --
 -- 2. Wrap it in 'ApplicationError' to use in your Railway:
 --
@@ -114,16 +114,16 @@ instance ToJSON ApplicationErrorInfo where
 -- >>> data UserError = NameEmpty | EmailInvalid
 -- >>>
 -- >>> instance IsApplicationError UserError where
--- >>>   errorInfo NameEmpty =
+-- >>>   getErrorInfo NameEmpty =
 -- >>>     ApplicationErrorInfo "Name cannot be empty" "USER_NAME_EMPTY" Error Nothing
--- >>>   errorInfo EmailInvalid =
+-- >>>   getErrorInfo EmailInvalid =
 -- >>>     ApplicationErrorInfo "Email format is invalid" "USER_EMAIL_INVALID" Error Nothing
 class IsApplicationError e where
   -- | Converts the error into detailed 'ApplicationErrorInfo'.
   --
   -- Implement this method to define how your custom error type is converted
   -- to the standard error information format.
-  errorInfo :: e -> ApplicationErrorInfo
+  getErrorInfo :: e -> ApplicationErrorInfo
 
 -- | A wrapper type that can hold any application error implementing 'IsApplicationError'.
 --
@@ -153,13 +153,13 @@ data ApplicationError
     ApplicationError e
 
 instance ToJSON ApplicationError where
-  toJSON (ApplicationError e) = toJSON (errorInfo e)
+  toJSON (ApplicationError e) = toJSON (getErrorInfo e)
 
 instance Show ApplicationError where
   show (ApplicationError e) = show e
 
 instance IsApplicationError ApplicationError where
-  errorInfo (ApplicationError e) = errorInfo e
+  getErrorInfo (ApplicationError e) = getErrorInfo e
 
 -- | Represents a collection of one or more application errors.
 --
