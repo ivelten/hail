@@ -3,6 +3,7 @@ name: CI
 on:
   push:
     branches: [master]
+    tags: ["v*"]
   pull_request:
     branches: [master]
 
@@ -46,3 +47,38 @@ jobs:
         env:
           LANG: C.UTF-8
           LC_ALL: C.UTF-8
+
+      - name: Build source distribution
+        if: startsWith(github.ref, 'refs/tags/v') && matrix.ghc == '9.10'
+        run: cabal sdist
+
+      - name: Upload sdist artifact
+        if: startsWith(github.ref, 'refs/tags/v') && matrix.ghc == '9.10'
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: dist-newstyle/sdist/*.tar.gz
+
+  release:
+    name: Create GitHub Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download sdist artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: sdist
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: "*.tar.gz"
+          generate_release_notes: false
+          body_path: CHANGELOG.md
