@@ -97,6 +97,9 @@ module Monad.Rail
     -- * Throwing Errors
     throwError,
 
+    -- * Exception handling
+    tryRail,
+
     -- * Operators
     (<!>),
 
@@ -107,6 +110,7 @@ module Monad.Rail
     ErrorInfo (..),
     HasErrorInfo (..),
     ApplicationError (..),
+    CaughtException (..),
   )
 where
 

@@ -75,15 +75,17 @@ module Monad.Rail.Types
     Rail,
     runRail,
     throwError,
+    tryRail,
     (<!>),
   )
 where
 
 import Control.Monad.Except (ExceptT (..), runExceptT)
 import qualified Control.Monad.Except as E
-import Control.Monad.IO.Class (MonadIO)
+import qualified Control.Exception as Ex
+import Control.Monad.IO.Class (MonadIO, liftIO)
 import Data.List.NonEmpty (NonEmpty (..))
-import Monad.Rail.Error (ApplicationError, RailError (..))
+import Monad.Rail.Error (ApplicationError (..), CaughtException (..), RailError (..))
 
 -- | The Railway-Oriented monad transformer.
 --
@@ -193,6 +195,41 @@ runRail = runExceptT . unRailT
 -- >>>   Right () -> putStrLn "All valid!"
 throwError :: (Monad m) => ApplicationError -> RailT RailError m a
 throwError err = RailT $ E.throwError $ RailError (err :| [])
+
+-- | Safely execute an IO action that may throw exceptions,
+-- converting any exception into a Railway error.
+--
+-- This function wraps 'Ex.try' and lifts any caught 'Ex.SomeException' into
+-- the Railway as a 'CaughtException', producing an 'ApplicationError' on
+-- failure. It lets you bring ordinary IO operations into the Railway without
+-- writing manual exception handling.
+--
+-- == Example
+--
+-- >>> -- File operations
+-- >>> readConfig :: FilePath -> Rail String
+-- >>> readConfig path = tryRail (readFile path)
+-- >>>
+-- >>> -- Combine with validations
+-- >>> pipeline :: FilePath -> Rail ()
+-- >>> pipeline filePath = do
+-- >>>   content <- tryRail (readFile filePath)
+-- >>>   validateName content <!> validateEmail content
+-- >>>   saveToDb content
+--
+-- If the IO action throws, the 'ErrorInfo' will contain:
+--
+-- * 'publicMessage': @"An unexpected error occurred"@
+-- * 'internalMessage': the exception message, for logs only
+-- * 'code': @"UNCAUGHT_EXCEPTION"@
+-- * 'severity': 'Critical'
+-- * 'exception': the original 'Ex.SomeException'
+tryRail :: IO a -> Rail a
+tryRail action = do
+  result <- liftIO $ Ex.try action
+  case result of
+    Right value -> pure value
+    Left ex -> throwError (ApplicationError (CaughtException ex))
 
 -- | Accumulates errors from two Railway validations.
 --

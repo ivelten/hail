@@ -33,6 +33,7 @@ module Monad.Rail.Error
     ErrorInfo (..),
     HasErrorInfo (..),
     ApplicationError (..),
+    CaughtException (..),
     RailError (..),
   )
 where
@@ -41,6 +42,7 @@ import qualified Control.Exception as E
 import Data.Aeson (ToJSON (..), Value, object, (.=))
 import Data.List.NonEmpty (NonEmpty)
 import Data.Text (Text)
+import qualified Data.Text as T
 
 -- | Represents the severity level of an application error.
 --
@@ -157,6 +159,38 @@ class HasErrorInfo e where
   -- Implement this method to define how your custom error type is converted
   -- to the standard error information format.
   errorInfo :: e -> ErrorInfo
+
+-- | Wrapper for caught exceptions that can be used as an error type.
+--
+-- This newtype captures a 'E.SomeException' thrown in 'IO' and makes it
+-- compatible with the Railway error system via its 'HasErrorInfo' instance.
+-- It is the error type produced by 'tryRail' when an IO action throws.
+--
+-- The 'publicMessage' is intentionally generic so that internal details are
+-- never accidentally exposed to end users. The original exception is stored in
+-- the 'exception' field of 'ErrorInfo' for logging and debugging purposes.
+--
+-- == Example
+--
+-- >>> result <- runRail (tryRail (readFile "missing.txt"))
+-- >>> case result of
+-- >>>   Left errs -> print errs    -- publicMessage: "An unexpected error occurred"
+-- >>>   Right contents -> putStr contents
+newtype CaughtException = CaughtException E.SomeException
+
+instance Show CaughtException where
+  show (CaughtException ex) = "CaughtException: " <> show ex
+
+instance HasErrorInfo CaughtException where
+  errorInfo (CaughtException ex) =
+    ErrorInfo
+      { publicMessage = "An unexpected error occurred",
+        internalMessage = Just (T.pack (E.displayException ex)),
+        code = "UNCAUGHT_EXCEPTION",
+        severity = Critical,
+        exception = Just ex,
+        details = Nothing
+      }
 
 -- | A wrapper type that can hold any application error implementing 'HasErrorInfo'.
 --

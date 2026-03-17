@@ -151,6 +151,64 @@ The key operator for Railway-Oriented Programming. Runs **both** sides regardles
 
 Ideal for form validation, configuration checks, and any scenario where you want to report all problems at once.
 
+### `tryRail`
+
+Wraps any IO action that may throw exceptions and lifts it into the Railway:
+
+```haskell
+tryRail :: IO a -> Rail a
+```
+
+If the action throws, the exception is caught and converted to an `ApplicationError` wrapping a `CaughtException`. This lets you bring ordinary IO operations into a Railway pipeline without manual exception handling.
+
+```haskell
+-- File operations
+readConfig :: FilePath -> Rail String
+readConfig path = tryRail (readFile path)
+
+-- Database or HTTP calls
+fetchUser :: UserId -> Rail User
+fetchUser uid = tryRail (queryDb uid)
+
+-- Combined with validations
+pipeline :: FilePath -> Rail ()
+pipeline filePath = do
+  content <- tryRail (readFile filePath)
+  validateName content <!> validateEmail content
+  saveToDb content
+```
+
+The resulting `ErrorInfo` for a caught exception will have:
+
+| Field | Value |
+| --- | --- |
+| `publicMessage` | `"An unexpected error occurred"` |
+| `internalMessage` | The exception message (logs only) |
+| `code` | `"UNCAUGHT_EXCEPTION"` |
+| `severity` | `Critical` |
+| `exception` | The original `SomeException` |
+
+### `CaughtException`
+
+The error type produced by `tryRail`. It wraps `SomeException` and implements `HasErrorInfo`, so it works anywhere a Railway error is expected:
+
+```haskell
+newtype CaughtException = CaughtException SomeException
+```
+
+You can also use it directly if you catch exceptions yourself:
+
+```haskell
+import qualified Control.Exception as E
+
+safeAction :: Rail ()
+safeAction = do
+  result <- liftIO $ E.try someIO
+  case result of
+    Right val -> process val
+    Left ex   -> throwError (ApplicationError (CaughtException ex))
+```
+
 ### `runRail`
 
 Executes the computation and returns `Either RailError a`:

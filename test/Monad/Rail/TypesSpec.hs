@@ -3,7 +3,9 @@
 module Monad.Rail.TypesSpec (spec) where
 
 import Control.Monad.IO.Class (liftIO)
+import qualified Control.Exception as Ex
 import Data.IORef (newIORef, readIORef, modifyIORef)
+import Data.List (isInfixOf)
 import qualified Data.List.NonEmpty as NE
 import Monad.Rail.Error
 import Monad.Rail.Types
@@ -172,3 +174,60 @@ spec = do
           liftIO $ modifyIORef ref (+ 1)
         val <- readIORef ref
         val `shouldBe` 1
+
+  describe "tryRail" $ do
+    it "returns Right when the IO action succeeds" $ do
+      result <- runRail (tryRail (pure (42 :: Int)))
+      case result of
+        Left _    -> expectationFailure "expected Right, got Left"
+        Right val -> val `shouldBe` 42
+
+    it "returns Left when the IO action throws" $ do
+      let boom = Ex.throwIO (userError "oops")
+      result <- runRail (tryRail boom :: Rail ())
+      case result of
+        Right _ -> expectationFailure "expected Left, got Right"
+        Left _  -> pure ()
+
+    it "wraps the exception as a single UNCAUGHT_EXCEPTION error" $ do
+      let boom = Ex.throwIO (userError "oops")
+      result <- runRail (tryRail boom :: Rail ())
+      case result of
+        Right _ -> expectationFailure "expected Left, got Right"
+        Left err -> do
+          let errs = getAppErrors err
+          length errs `shouldBe` 1
+          (code . errorInfo . NE.head) errs `shouldBe` "UNCAUGHT_EXCEPTION"
+
+    it "the error has Critical severity" $ do
+      let boom = Ex.throwIO (userError "oops")
+      result <- runRail (tryRail boom :: Rail ())
+      case result of
+        Right _ -> expectationFailure "expected Left, got Right"
+        Left err ->
+          (severity . errorInfo . NE.head . getAppErrors) err `shouldBe` Critical
+
+    it "preserves the original exception in the error" $ do
+      let boom = Ex.throwIO (userError "original message")
+      result <- runRail (tryRail boom :: Rail ())
+      case result of
+        Right _ -> expectationFailure "expected Left, got Right"
+        Left err ->
+          let info = (errorInfo . NE.head . getAppErrors) err
+          in exception info `shouldSatisfy` maybe False (("original message" `isInfixOf`) . show)
+
+    it "short-circuits: code after tryRail failure is not executed" $ do
+      ref <- newIORef (0 :: Int)
+      let boom = Ex.throwIO (userError "fail")
+      _ <- runRail $ do
+        _ <- tryRail (boom :: IO Int)
+        liftIO $ modifyIORef ref (+ 1)
+      val <- readIORef ref
+      val `shouldBe` 0
+
+    it "can be combined with <!>" $ do
+      let boom = Ex.throwIO (userError "io fail")
+      result <- runRail (tryRail (boom :: IO ()) <!> throw ErrA)
+      case result of
+        Right _ -> expectationFailure "expected Left, got Right"
+        Left err -> length (getAppErrors err) `shouldBe` 2
