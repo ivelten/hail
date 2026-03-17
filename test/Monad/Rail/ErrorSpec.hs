@@ -25,8 +25,7 @@ instance HasErrorInfo TestError where
         code = "TEST_ERROR_A",
         severity = Error,
         exception = Nothing,
-        details = Nothing,
-        requestInfo = Nothing
+        details = Nothing
       }
   errorInfo TestErrorB =
     ErrorInfo
@@ -35,8 +34,7 @@ instance HasErrorInfo TestError where
         code = "TEST_ERROR_B",
         severity = Critical,
         exception = Nothing,
-        details = Just (object ["key" .= ("value" :: Text)]),
-        requestInfo = Just (object ["path" .= ("/api/test" :: Text)])
+        details = Just (object ["key" .= ("value" :: Text)])
       }
 
 mkAppError :: TestError -> ApplicationError
@@ -121,8 +119,7 @@ spec = do
               code = "GENERIC_ERROR",
               severity = Error,
               exception = Nothing,
-              details = Nothing,
-              requestInfo = Just (object ["method" .= ("POST" :: Text)])
+              details = Nothing
             }
     let encoded = encode (toJSON errInfo)
 
@@ -131,8 +128,6 @@ spec = do
         encoded `shouldSatisfy` contains "\"message\""
       it "includes 'code'" $
         encoded `shouldSatisfy` contains "\"code\""
-      it "includes 'exception'" $
-        encoded `shouldSatisfy` contains "\"exception\""
       it "includes 'details'" $
         encoded `shouldSatisfy` contains "\"details\""
       it "uses publicMessage as the 'message' value" $
@@ -143,8 +138,8 @@ spec = do
         encoded `shouldSatisfy` notContains "internalMessage"
       it "does NOT include 'severity'" $
         encoded `shouldSatisfy` notContains "severity"
-      it "does NOT include 'requestInfo'" $
-        encoded `shouldSatisfy` notContains "requestInfo"
+      it "does NOT include 'exception'" $
+        encoded `shouldSatisfy` notContains "exception"
 
   describe "ApplicationError" $ do
     it "Show delegates to the wrapped error's Show instance" $

@@ -24,8 +24,7 @@ instance HasErrorInfo TestError where
         code = "ERR_A",
         severity = Error,
         exception = Nothing,
-        details = Nothing,
-        requestInfo = Nothing
+        details = Nothing
       }
   errorInfo ErrB =
     ErrorInfo
@@ -34,8 +33,7 @@ instance HasErrorInfo TestError where
         code = "ERR_B",
         severity = Error,
         exception = Nothing,
-        details = Nothing,
-        requestInfo = Nothing
+        details = Nothing
       }
   errorInfo ErrC =
     ErrorInfo
@@ -44,8 +42,7 @@ instance HasErrorInfo TestError where
         code = "ERR_C",
         severity = Error,
         exception = Nothing,
-        details = Nothing,
-        requestInfo = Nothing
+        details = Nothing
       }
 
 throw :: TestError -> Rail ()

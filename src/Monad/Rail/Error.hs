@@ -105,7 +105,10 @@ data ErrorInfo = ErrorInfo
     --
     -- This field is useful for capturing the underlying exception that caused
     -- the error, such as a database connection timeout or file I\/O error.
-    -- When serialized to JSON, the exception is converted to its string representation.
+    --
+    -- This field is intentionally excluded from JSON serialization to prevent
+    -- accidental exposure of internal exception details in API responses. It is
+    -- intended for logging and debugging purposes only.
     exception :: Maybe E.SomeException,
     -- | Optional context details associated with the error.
     --
@@ -121,15 +124,7 @@ data ErrorInfo = ErrorInfo
     -- arrays, strings, or any JSON value. This field is exposed in API responses.
     --
     -- Example: @Just (object ["userId" .= (123 :: Int), "attemptCount" .= (5 :: Int)])@
-    details :: Maybe Value,
-    -- | Optional information about the request that caused this error.
-    --
-    -- This field is intentionally excluded from JSON serialization to prevent
-    -- accidental exposure of request details in API responses. It is intended
-    -- for logging, debugging, and administrative purposes only.
-    --
-    -- Example: @Just (object ["method" .= (\"POST\" :: Text), "path" .= (\"/api/users\" :: Text)])@
-    requestInfo :: Maybe Value
+    details :: Maybe Value
   }
   deriving (Show)
 
@@ -138,7 +133,6 @@ instance ToJSON ErrorInfo where
     object
       [ "message" .= publicMessage err,
         "code" .= code err,
-        "exception" .= fmap show (exception err),
         "details" .= details err
       ]
 

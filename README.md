@@ -38,7 +38,7 @@ instance HasErrorInfo UserError where
       , severity        = Error
       , exception       = Nothing
       , details         = Nothing
-      , requestInfo     = Nothing
+
       }
   errorInfo EmailInvalid =
     ErrorInfo
@@ -48,7 +48,7 @@ instance HasErrorInfo UserError where
       , severity        = Error
       , exception       = Nothing
       , details         = Nothing
-      , requestInfo     = Nothing
+
       }
   errorInfo AgeTooLow =
     ErrorInfo
@@ -58,7 +58,7 @@ instance HasErrorInfo UserError where
       , severity        = Error
       , exception       = Nothing
       , details         = Nothing
-      , requestInfo     = Nothing
+
       }
 ```
 
@@ -110,9 +110,9 @@ Output:
 
 ```json
 [
-  {"message":"Name cannot be empty","code":"USER_NAME_EMPTY","exception":null,"details":null},
-  {"message":"Invalid email format","code":"USER_EMAIL_INVALID","exception":null,"details":null},
-  {"message":"Must be at least 18 years old","code":"USER_AGE_TOO_LOW","exception":null,"details":null}
+  {"message":"Name cannot be empty","code":"USER_NAME_EMPTY","details":null},
+  {"message":"Invalid email format","code":"USER_EMAIL_INVALID","details":null},
+  {"message":"Must be at least 18 years old","code":"USER_AGE_TOO_LOW","details":null}
 ]
 ```
 
@@ -176,11 +176,10 @@ Holds all metadata for an error. Fields are split by visibility:
 | --- | --- | --- |
 | `publicMessage` | ✅ as `"message"` | Safe to show end users |
 | `code` | ✅ | Machine-readable identifier |
-| `exception` | ✅ as string | Underlying exception, if any |
 | `details` | ✅ | Extra JSON context (user ID, resource ID, etc.) |
 | `internalMessage` | ❌ | Sensitive details for logs only |
 | `severity` | ❌ | `Error` or `Critical`, for monitoring |
-| `requestInfo` | ❌ | Raw request data, for debugging only |
+| `exception` | ❌ | Underlying exception, for debugging only |
 
 Fields marked ❌ are intentionally excluded from JSON serialization to prevent accidental exposure in API responses.
 

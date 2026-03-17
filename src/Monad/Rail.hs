@@ -33,7 +33,6 @@
 -- >>>     , severity = Error
 -- >>>     , exception = Nothing
 -- >>>     , details = Nothing
--- >>>     , requestInfo = Nothing
 -- >>>     }
 --
 -- Use in your railway:
@@ -78,7 +77,6 @@
 -- * 'internalMessage' - Sensitive details for logs (not exposed in JSON)
 -- * 'code' - Machine-readable error code
 -- * 'details' - Additional context (exposed in JSON)
--- * 'requestInfo' - Request data for debugging (not exposed in JSON)
 --
 -- The 'RailError' type implements 'ToJSON', so errors serialize automatically:
 --
