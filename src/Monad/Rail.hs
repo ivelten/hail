@@ -124,6 +124,7 @@ module Monad.Rail
     PublicErrorInfo (..),
     RequestContent (..),
     RequestInfo (..),
+    HTTPRequestInfo (..),
     InternalErrorInfo (..),
     HasErrorInfo (..),
     publicErrorInfo,

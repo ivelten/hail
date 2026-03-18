@@ -386,7 +386,13 @@ Error data is split into two records by visibility. Use the `publicErrorInfo` an
 | `componentVersion` | `componentVersion` | `errorComponentVersion` |
 | `callStack` | `callStack` | `errorCallStack` |
 
-**`RequestInfo`** — structured context about the HTTP request that triggered the error, attached via `errorRequestInfo`:
+**`RequestInfo`** — sum type for request context, attached via `errorRequestInfo`. Each constructor wraps a protocol-specific record:
+
+| Constructor | Wrapped record |
+| --- | --- |
+| `HTTPRequest` | `HTTPRequestInfo` |
+
+**`HTTPRequestInfo`** — fields for HTTP requests:
 
 | Field | Purpose |
 | --- | --- |

@@ -65,6 +65,7 @@ module Monad.Rail.Error
     PublicErrorInfo (..),
     RequestContent (..),
     RequestInfo (..),
+    HTTPRequestInfo (..),
     InternalErrorInfo (..),
     HasErrorInfo (..),
     publicErrorInfo,
@@ -153,7 +154,7 @@ instance ToJSON PublicErrorInfo where
           ("details" .=) <$> details pub
         ]
 
--- | The body content of an HTTP request, used in 'RequestInfo'.
+-- | The body content of an HTTP request, used in 'HTTPRequestInfo'.
 --
 -- Most logging solutions index JSON natively, so 'JsonBody' preserves the
 -- structure of JSON payloads for richer querying. Non-JSON payloads are
@@ -170,18 +171,15 @@ instance ToJSON RequestContent where
   toJSON (JsonBody v) = object ["type" .= ("json" :: Text), "body" .= v]
   toJSON (TextBody t) = object ["type" .= ("text" :: Text), "body" .= t]
 
--- | Structured context about the HTTP request that triggered an error.
+-- | Structured context about a request that triggered an error.
 --
--- Attach a 'RequestInfo' to 'InternalErrorInfo' to give log aggregators
--- first-class access to request identifiers, headers, and body without
--- having to parse opaque blobs. All fields are optional so you can populate
--- only what is available at the call site.
---
--- Empty header lists are omitted from JSON serialization.
+-- 'RequestInfo' is a sum type — each constructor corresponds to a different
+-- request protocol. Wrap the matching protocol-specific record in its
+-- constructor before storing it on 'InternalErrorInfo'.
 --
 -- Example:
 --
--- >>> RequestInfo
+-- >>> HTTPRequest $ HTTPRequestInfo
 -- >>>   { requestId      = Just "req_abc123"
 -- >>>   , requestMethod  = Just "POST"
 -- >>>   , requestIp      = Just "203.0.113.42"
@@ -189,7 +187,23 @@ instance ToJSON RequestContent where
 -- >>>   , requestHeaders = [("Content-Type", "application/json"), ("X-Request-Id", "req_abc123")]
 -- >>>   , requestBody    = Just (JsonBody (object ["name" .= ("Alice" :: Text)]))
 -- >>>   }
-data RequestInfo = RequestInfo
+data RequestInfo
+  = -- | An HTTP request. See 'HTTPRequestInfo' for the available fields.
+    HTTPRequest HTTPRequestInfo
+  deriving (Show)
+
+instance ToJSON RequestInfo where
+  toJSON (HTTPRequest hi) = toJSON hi
+
+-- | Structured context about an HTTP request that triggered an error.
+--
+-- Attach an 'HTTPRequestInfo' (via 'HTTPRequest') to 'InternalErrorInfo' to
+-- give log aggregators first-class access to request identifiers, headers,
+-- and body without having to parse opaque blobs. All fields are optional so
+-- you can populate only what is available at the call site.
+--
+-- Empty header lists are omitted from JSON serialization.
+data HTTPRequestInfo = HTTPRequestInfo
   { -- | An optional unique identifier for the request.
     --
     -- Useful for correlating errors with a specific request across services
@@ -233,18 +247,18 @@ data RequestInfo = RequestInfo
   }
   deriving (Show)
 
-instance ToJSON RequestInfo where
-  toJSON ri =
+instance ToJSON HTTPRequestInfo where
+  toJSON hi =
     object $
       catMaybes
-        [ ("requestId" .=) <$> requestId ri,
-          ("method" .=) <$> requestMethod ri,
-          ("ip" .=) <$> requestIp ri,
-          ("length" .=) <$> requestLength ri,
-          case requestHeaders ri of
+        [ ("requestId" .=) <$> requestId hi,
+          ("method" .=) <$> requestMethod hi,
+          ("ip" .=) <$> requestIp hi,
+          ("length" .=) <$> requestLength hi,
+          case requestHeaders hi of
             [] -> Nothing
             hs -> Just ("headers" .= [object ["name" .= n, "value" .= v] | (n, v) <- hs]),
-          ("body" .=) <$> requestBody ri
+          ("body" .=) <$> requestBody hi
         ]
 
 -- | Contains internal diagnostic information about an application error.
@@ -278,9 +292,9 @@ data InternalErrorInfo = InternalErrorInfo
     -- diagnostics. It is intended for internal observability only and is never
     -- included in API responses.
     --
-    -- See 'RequestInfo' and 'RequestContent' for the available fields.
+    -- See 'RequestInfo', 'HTTPRequestInfo', and 'RequestContent' for the available fields.
     --
-    -- Example: @Just (RequestInfo { requestId = Just \"req_abc\", requestHeaders = [], requestBody = Nothing })@
+    -- Example: @Just (HTTPRequest (HTTPRequestInfo { requestId = Just \"req_abc\", requestHeaders = [], requestBody = Nothing }))@
     requestInfo :: Maybe RequestInfo,
     -- | The name of the application component or subsystem that produced this error.
     --
@@ -413,7 +427,8 @@ class HasErrorInfo e where
   errorException :: e -> Maybe E.SomeException
   errorException _ = Nothing
 
-  -- | Optional structured HTTP request context for tracing. Defaults to 'Nothing'.
+  -- | Optional structured request context for tracing. Defaults to 'Nothing'.
+  -- Use 'HTTPRequest' to attach HTTP request data via 'HTTPRequestInfo'.
   errorRequestInfo :: e -> Maybe RequestInfo
   errorRequestInfo _ = Nothing
 
