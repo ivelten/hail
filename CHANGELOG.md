@@ -1,6 +1,6 @@
 # Revision history for monad-rail
 
-## 0.1.0.0 -- 2026-03-17
+## 0.1.0.0 -- 2026-03-18
 
 * First release.
 * `RailT` monad transformer for Railway-Oriented Programming.
