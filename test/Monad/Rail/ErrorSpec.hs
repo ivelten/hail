@@ -4,8 +4,12 @@ module Monad.Rail.ErrorSpec (spec) where
 
 import qualified Data.ByteString.Lazy.Char8 as BSLC
 import Data.Aeson (Value (..), encode, object, toJSON, (.=))
+import qualified Control.Exception as Ex
+import Data.List (isInfixOf)
+import Data.Maybe (isNothing)
 import qualified Data.List.NonEmpty as NE
 import Data.Text (Text)
+import qualified GHC.Stack as GHC
 import Monad.Rail.Error
 import Test.Hspec
 import Test.QuickCheck
@@ -18,23 +22,35 @@ data TestError = TestErrorA | TestErrorB
   deriving (Show, Eq)
 
 instance HasErrorInfo TestError where
-  errorInfo TestErrorA =
-    ErrorInfo
-      { publicMessage = "Error A occurred",
-        internalMessage = Just "Internal details for A",
+  publicErrorInfo TestErrorA =
+    PublicErrorInfo
+      { message = "Error A occurred",
         code = "TEST_ERROR_A",
-        severity = Error,
-        exception = Nothing,
         details = Nothing
       }
-  errorInfo TestErrorB =
-    ErrorInfo
-      { publicMessage = "Error B occurred",
-        internalMessage = Nothing,
+  publicErrorInfo TestErrorB =
+    PublicErrorInfo
+      { message = "Error B occurred",
         code = "TEST_ERROR_B",
+        details = Just (object ["key" .= ("value" :: Text)])
+      }
+  internalErrorInfo TestErrorA =
+    InternalErrorInfo
+      { internalMessage = Just "Internal details for A",
+        severity = Error,
+        exception = Nothing,
+        requestInfo = Nothing,
+        component = Nothing,
+        callStack = Nothing
+      }
+  internalErrorInfo TestErrorB =
+    InternalErrorInfo
+      { internalMessage = Nothing,
         severity = Critical,
         exception = Nothing,
-        details = Just (object ["key" .= ("value" :: Text)])
+        requestInfo = Nothing,
+        component = Nothing,
+        callStack = Nothing
       }
 
 mkAppError :: TestError -> ApplicationError
@@ -111,61 +127,147 @@ spec = do
       it "serializes Critical as JSON string \"Critical\"" $
         toJSON Critical `shouldBe` String "Critical"
 
-  describe "ErrorInfo" $ do
-    let errInfo =
-          ErrorInfo
-            { publicMessage = "Something went wrong",
-              internalMessage = Just "DB connection failed at 10.0.0.1",
+  describe "PublicErrorInfo" $ do
+    let pub =
+          PublicErrorInfo
+            { message = "Something went wrong",
               code = "GENERIC_ERROR",
-              severity = Error,
-              exception = Nothing,
               details = Nothing
             }
-    let encoded = encode (toJSON errInfo)
+    let encoded = encode (toJSON pub)
 
     describe "ToJSON — included fields" $ do
-      it "includes 'message' (publicMessage)" $
+      it "includes 'message'" $
         encoded `shouldSatisfy` contains "\"message\""
       it "includes 'code'" $
         encoded `shouldSatisfy` contains "\"code\""
-      it "includes 'details'" $
-        encoded `shouldSatisfy` contains "\"details\""
-      it "uses publicMessage as the 'message' value" $
+      it "uses the message value" $
         encoded `shouldSatisfy` contains "Something went wrong"
 
-    describe "ToJSON — excluded sensitive fields" $ do
+    describe "ToJSON — null fields are omitted" $ do
+      it "omits 'details' when Nothing" $
+        encoded `shouldSatisfy` notContains "details"
+
+    describe "ToJSON — non-null optional fields are included" $ do
+      it "includes 'details' when Just" $ do
+        let pubWithDetails = pub {details = Just (object ["resourceId" .= ("usr_1" :: Text)])}
+        encode (toJSON pubWithDetails) `shouldSatisfy` contains "\"details\""
+
+    describe "ToJSON — sensitive fields are absent" $ do
       it "does NOT include 'internalMessage'" $
         encoded `shouldSatisfy` notContains "internalMessage"
       it "does NOT include 'severity'" $
         encoded `shouldSatisfy` notContains "severity"
       it "does NOT include 'exception'" $
         encoded `shouldSatisfy` notContains "exception"
+      it "does NOT include 'requestInfo'" $
+        encoded `shouldSatisfy` notContains "requestInfo"
+      it "does NOT include 'component'" $
+        encoded `shouldSatisfy` notContains "component"
+      it "does NOT include 'callStack'" $
+        encoded `shouldSatisfy` notContains "callStack"
+
+  describe "InternalErrorInfo" $ do
+    let base =
+          InternalErrorInfo
+            { internalMessage = Nothing,
+              severity = Error,
+              exception = Nothing,
+              requestInfo = Nothing,
+              component = Nothing,
+              callStack = Nothing
+            }
+
+    describe "ToJSON — severity is always present" $ do
+      it "includes 'severity' even when all optional fields are Nothing" $
+        encode (toJSON base) `shouldSatisfy` contains "\"severity\""
+
+    describe "ToJSON — null fields are omitted" $ do
+      it "omits 'internalMessage' when Nothing" $
+        encode (toJSON base) `shouldSatisfy` notContains "internalMessage"
+      it "omits 'exception' when Nothing" $
+        encode (toJSON base) `shouldSatisfy` notContains "exception"
+      it "omits 'requestInfo' when Nothing" $
+        encode (toJSON base) `shouldSatisfy` notContains "requestInfo"
+      it "omits 'component' when Nothing" $
+        encode (toJSON base) `shouldSatisfy` notContains "component"
+      it "omits 'callStack' when Nothing" $
+        encode (toJSON base) `shouldSatisfy` notContains "callStack"
+
+    describe "ToJSON — non-null optional fields are included" $ do
+      it "includes 'internalMessage' when Just" $
+        encode (toJSON base {internalMessage = Just "debug info"})
+          `shouldSatisfy` contains "\"internalMessage\""
+      it "includes 'component' when Just" $
+        encode (toJSON base {component = Just "auth"})
+          `shouldSatisfy` contains "\"component\""
+      it "includes the component value" $
+        encode (toJSON base {component = Just "auth"})
+          `shouldSatisfy` contains "auth"
+      it "includes 'exception' as a string when Just" $ do
+        ex <- Ex.try (Ex.evaluate (error "boom")) :: IO (Either Ex.SomeException ())
+        case ex of
+          Left e ->
+            encode (toJSON base {exception = Just e})
+              `shouldSatisfy` contains "\"exception\""
+          Right _ -> expectationFailure "expected exception"
+      it "includes 'callStack' as a string when Just" $ do
+        let internal = internalErrorInfo (mkAppError TestErrorA)
+            withCs = internal {callStack = Just GHC.callStack}
+        encode (toJSON withCs) `shouldSatisfy` contains "\"callStack\""
+
+  describe "CaughtException" $ do
+    it "Show includes the exception message" $ do
+      let ce = CaughtException "CODE" (Ex.SomeException (userError "test msg")) Nothing
+      show ce `shouldSatisfy` ("test msg" `isInfixOf`)
+
+    it "publicErrorInfo uses caughtCode as the error code" $ do
+      let ce = CaughtException "MY_CUSTOM_CODE" (Ex.SomeException (userError "oops")) Nothing
+      code (publicErrorInfo ce) `shouldBe` "MY_CUSTOM_CODE"
+
+    it "publicErrorInfo message is always the generic safe message" $ do
+      let ce = CaughtException "ANY_CODE" (Ex.SomeException (userError "internal detail")) Nothing
+      message (publicErrorInfo ce) `shouldBe` "An unexpected error occurred"
+
+    it "internalErrorInfo has Critical severity" $ do
+      let ce = CaughtException "CODE" (Ex.SomeException (userError "oops")) Nothing
+      severity (internalErrorInfo ce) `shouldBe` Critical
+
+    it "internalErrorInfo.exception holds the original exception" $ do
+      let originalEx = Ex.SomeException (userError "original")
+          ce = CaughtException "CODE" originalEx Nothing
+      exception (internalErrorInfo ce) `shouldSatisfy`
+        maybe False (("original" `isInfixOf`) . show)
+
+    it "internalErrorInfo.callStack is Nothing when caughtCallStack is Nothing" $ do
+      let ce = CaughtException "CODE" (Ex.SomeException (userError "oops")) Nothing
+      callStack (internalErrorInfo ce) `shouldSatisfy` isNothing
 
   describe "ApplicationError" $ do
     it "Show delegates to the wrapped error's Show instance" $
       show (mkAppError TestErrorA) `shouldBe` "TestErrorA"
 
-    it "errorInfo extracts correct code" $ do
-      let info = errorInfo (mkAppError TestErrorA)
-      code info `shouldBe` "TEST_ERROR_A"
+    it "publicErrorInfo extracts correct code" $ do
+      let pub = publicErrorInfo (mkAppError TestErrorA)
+      code pub `shouldBe` "TEST_ERROR_A"
 
-    it "errorInfo extracts correct publicMessage" $ do
-      let info = errorInfo (mkAppError TestErrorA)
-      publicMessage info `shouldBe` "Error A occurred"
+    it "publicErrorInfo extracts correct message" $ do
+      let pub = publicErrorInfo (mkAppError TestErrorA)
+      message pub `shouldBe` "Error A occurred"
 
-    it "errorInfo extracts correct severity" $ do
-      let info = errorInfo (mkAppError TestErrorA)
-      severity info `shouldBe` Error
+    it "internalErrorInfo extracts correct severity" $ do
+      let internal = internalErrorInfo (mkAppError TestErrorA)
+      severity internal `shouldBe` Error
 
     it "wraps different error types, each with their own info" $ do
-      let infoA = errorInfo (mkAppError TestErrorA)
-          infoB = errorInfo (mkAppError TestErrorB)
-      code infoA `shouldBe` "TEST_ERROR_A"
-      code infoB `shouldBe` "TEST_ERROR_B"
+      let pubA = publicErrorInfo (mkAppError TestErrorA)
+          pubB = publicErrorInfo (mkAppError TestErrorB)
+      code pubA `shouldBe` "TEST_ERROR_A"
+      code pubB `shouldBe` "TEST_ERROR_B"
 
     describe "ToJSON" $ do
-      it "serializes via errorInfo" $
-        toJSON (mkAppError TestErrorA) `shouldBe` toJSON (errorInfo TestErrorA)
+      it "serializes via publicErrorInfo" $
+        toJSON (mkAppError TestErrorA) `shouldBe` toJSON (publicErrorInfo TestErrorA)
 
   describe "RailError" $ do
     describe "Semigroup" $ do

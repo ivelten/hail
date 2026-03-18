@@ -76,6 +76,7 @@ module Monad.Rail.Types
     runRail,
     throwError,
     tryRail,
+    tryRailWithCode,
     (<!>),
   )
 where
@@ -85,6 +86,8 @@ import qualified Control.Monad.Except as E
 import qualified Control.Exception as Ex
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Data.List.NonEmpty (NonEmpty (..))
+import qualified Data.Text as T
+import GHC.Stack (HasCallStack, callStack)
 import Monad.Rail.Error (ApplicationError (..), CaughtException (..), RailError (..))
 
 -- | The Railway-Oriented monad transformer.
@@ -199,37 +202,53 @@ throwError err = RailT $ E.throwError $ RailError (err :| [])
 -- | Safely execute an IO action that may throw exceptions,
 -- converting any exception into a Railway error.
 --
--- This function wraps 'Ex.try' and lifts any caught 'Ex.SomeException' into
--- the Railway as a 'CaughtException', producing an 'ApplicationError' on
--- failure. It lets you bring ordinary IO operations into the Railway without
--- writing manual exception handling.
+-- This is a convenience wrapper around 'tryRailWithCode' that uses the default
+-- error code @\"UNCAUGHT_EXCEPTION\"@. Use 'tryRailWithCode' when you need a
+-- domain-specific error code.
 --
 -- == Example
 --
--- >>> -- File operations
 -- >>> readConfig :: FilePath -> Rail String
 -- >>> readConfig path = tryRail (readFile path)
 -- >>>
--- >>> -- Combine with validations
 -- >>> pipeline :: FilePath -> Rail ()
 -- >>> pipeline filePath = do
 -- >>>   content <- tryRail (readFile filePath)
 -- >>>   validateName content <!> validateEmail content
 -- >>>   saveToDb content
+tryRail :: HasCallStack => IO a -> Rail a
+tryRail = tryRailWithCode (T.pack "UNCAUGHT_EXCEPTION")
+
+-- | Like 'tryRail', but with a custom error code.
 --
--- If the IO action throws, the 'ErrorInfo' will contain:
+-- Wraps an IO action that may throw, converting any exception into a Railway
+-- error with the given code. This is useful when you want a domain-specific
+-- code in the resulting 'CaughtException' rather than the generic default.
 --
--- * 'publicMessage': @"An unexpected error occurred"@
--- * 'internalMessage': the exception message, for logs only
--- * 'code': @"UNCAUGHT_EXCEPTION"@
--- * 'severity': 'Critical'
--- * 'exception': the original 'Ex.SomeException'
-tryRail :: IO a -> Rail a
-tryRail action = do
+-- Because the code is the first argument, the function can be partially applied
+-- to create reusable, domain-specific try helpers:
+--
+-- >>> tryDb :: HasCallStack => IO a -> Rail a
+-- >>> tryDb = tryRailWithCode "DB_ERROR"
+-- >>>
+-- >>> tryHttp :: HasCallStack => IO a -> Rail a
+-- >>> tryHttp = tryRailWithCode "HTTP_ERROR"
+--
+-- Note: if you partially apply this function, add 'HasCallStack' to the
+-- wrapper's own signature so the call stack is captured at each call site
+-- rather than frozen at the definition of the wrapper.
+tryRailWithCode :: HasCallStack => T.Text -> IO a -> Rail a
+tryRailWithCode code action = do
   result <- liftIO $ Ex.try action
   case result of
     Right value -> pure value
-    Left ex -> throwError (ApplicationError (CaughtException ex))
+    Left ex -> throwError (ApplicationError caught)
+      where
+        caught = CaughtException
+          { caughtCode      = code,
+            caughtEx        = ex,
+            caughtCallStack = Just callStack
+          }
 
 -- | Accumulates errors from two Railway validations.
 --

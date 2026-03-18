@@ -26,14 +26,12 @@
 -- >>> data UserError = NameEmpty | EmailInvalid
 -- >>>
 -- >>> instance HasErrorInfo UserError where
--- >>>   errorInfo NameEmpty = ErrorInfo
--- >>>     { publicMessage = "Name cannot be empty"
--- >>>     , internalMessage = Nothing
--- >>>     , code = "USER_NAME_EMPTY"
--- >>>     , severity = Error
--- >>>     , exception = Nothing
--- >>>     , details = Nothing
--- >>>     }
+-- >>>   publicErrorInfo NameEmpty =
+-- >>>     PublicErrorInfo
+-- >>>       { message = "Name cannot be empty"
+-- >>>       , code    = "USER_NAME_EMPTY"
+-- >>>       , details = Nothing
+-- >>>       }
 --
 -- Use in your railway:
 --
@@ -71,12 +69,14 @@
 --
 -- == Logging and Monitoring
 --
--- Each error contains:
+-- Each error carries two separate records:
 --
--- * 'publicMessage' - Safe for end users
--- * 'internalMessage' - Sensitive details for logs (not exposed in JSON)
--- * 'code' - Machine-readable error code
--- * 'details' - Additional context (exposed in JSON)
+-- * 'PublicErrorInfo' - Safe for end users: 'message', 'code', 'details'.
+--   Serialized to JSON in API responses; null fields are omitted.
+-- * 'InternalErrorInfo' - Sensitive diagnostics: 'internalMessage', 'severity',
+--   'exception', 'requestInfo', 'component', 'callStack'.
+--   Implements 'ToJSON' for structured log output but is never included in public
+--   API responses. Null fields are omitted.
 --
 -- The 'RailError' type implements 'ToJSON', so errors serialize automatically:
 --
@@ -99,6 +99,7 @@ module Monad.Rail
 
     -- * Exception handling
     tryRail,
+    tryRailWithCode,
 
     -- * Operators
     (<!>),
@@ -107,7 +108,8 @@ module Monad.Rail
 
     -- | Error handling types and typeclasses
     ErrorSeverity (..),
-    ErrorInfo (..),
+    PublicErrorInfo (..),
+    InternalErrorInfo (..),
     HasErrorInfo (..),
     ApplicationError (..),
     CaughtException (..),

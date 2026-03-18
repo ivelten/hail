@@ -30,35 +30,23 @@ data UserError
   deriving (Show)
 
 instance HasErrorInfo UserError where
-  errorInfo NameEmpty =
-    ErrorInfo
-      { publicMessage   = "Name cannot be empty"
-      , internalMessage = Nothing
-      , code            = "USER_NAME_EMPTY"
-      , severity        = Error
-      , exception       = Nothing
-      , details         = Nothing
-
+  publicErrorInfo NameEmpty =
+    PublicErrorInfo
+      { message = "Name cannot be empty"
+      , code    = "USER_NAME_EMPTY"
+      , details = Nothing
       }
-  errorInfo EmailInvalid =
-    ErrorInfo
-      { publicMessage   = "Invalid email format"
-      , internalMessage = Nothing
-      , code            = "USER_EMAIL_INVALID"
-      , severity        = Error
-      , exception       = Nothing
-      , details         = Nothing
-
+  publicErrorInfo EmailInvalid =
+    PublicErrorInfo
+      { message = "Invalid email format"
+      , code    = "USER_EMAIL_INVALID"
+      , details = Nothing
       }
-  errorInfo AgeTooLow =
-    ErrorInfo
-      { publicMessage   = "Must be at least 18 years old"
-      , internalMessage = Nothing
-      , code            = "USER_AGE_TOO_LOW"
-      , severity        = Error
-      , exception       = Nothing
-      , details         = Nothing
-
+  publicErrorInfo AgeTooLow =
+    PublicErrorInfo
+      { message = "Must be at least 18 years old"
+      , code    = "USER_AGE_TOO_LOW"
+      , details = Nothing
       }
 ```
 
@@ -110,9 +98,9 @@ Output:
 
 ```json
 [
-  {"message":"Name cannot be empty","code":"USER_NAME_EMPTY","details":null},
-  {"message":"Invalid email format","code":"USER_EMAIL_INVALID","details":null},
-  {"message":"Must be at least 18 years old","code":"USER_AGE_TOO_LOW","details":null}
+  {"message":"Name cannot be empty","code":"USER_NAME_EMPTY"},
+  {"message":"Invalid email format","code":"USER_EMAIL_INVALID"},
+  {"message":"Must be at least 18 years old","code":"USER_AGE_TOO_LOW"}
 ]
 ```
 
@@ -156,7 +144,7 @@ Ideal for form validation, configuration checks, and any scenario where you want
 Wraps any IO action that may throw exceptions and lifts it into the Railway:
 
 ```haskell
-tryRail :: IO a -> Rail a
+tryRail :: HasCallStack => IO a -> Rail a
 ```
 
 If the action throws, the exception is caught and converted to an `ApplicationError` wrapping a `CaughtException`. This lets you bring ordinary IO operations into a Railway pipeline without manual exception handling.
@@ -166,10 +154,6 @@ If the action throws, the exception is caught and converted to an `ApplicationEr
 readConfig :: FilePath -> Rail String
 readConfig path = tryRail (readFile path)
 
--- Database or HTTP calls
-fetchUser :: UserId -> Rail User
-fetchUser uid = tryRail (queryDb uid)
-
 -- Combined with validations
 pipeline :: FilePath -> Rail ()
 pipeline filePath = do
@@ -178,35 +162,68 @@ pipeline filePath = do
   saveToDb content
 ```
 
-The resulting `ErrorInfo` for a caught exception will have:
+### `tryRailWithCode`
 
-| Field | Value |
-| --- | --- |
-| `publicMessage` | `"An unexpected error occurred"` |
-| `internalMessage` | The exception message (logs only) |
-| `code` | `"UNCAUGHT_EXCEPTION"` |
-| `severity` | `Critical` |
-| `exception` | The original `SomeException` |
+Like `tryRail`, but lets you specify a domain-specific error code:
+
+```haskell
+tryRailWithCode :: HasCallStack => Text -> IO a -> Rail a
+```
+
+Because the code is the first argument, you can partially apply it to create reusable, domain-specific helpers:
+
+```haskell
+tryDb :: HasCallStack => IO a -> Rail a
+tryDb = tryRailWithCode "DB_ERROR"
+
+tryHttp :: HasCallStack => IO a -> Rail a
+tryHttp = tryRailWithCode "HTTP_ERROR"
+
+pipeline :: Rail ()
+pipeline = do
+  user <- tryDb   (queryUser userId)
+  resp <- tryHttp (fetchProfile user)
+  pure ()
+```
+
+> **Note:** add `HasCallStack` to your wrapper's own signature so the call stack is captured at each call site rather than frozen at the wrapper's definition.
+
+The resulting error for a caught exception will have:
+
+| Info | Field | Value |
+| --- | --- | --- |
+| `PublicErrorInfo` | `message` | `"An unexpected error occurred"` |
+| `PublicErrorInfo` | `code` | `"UNCAUGHT_EXCEPTION"` (customizable via `CaughtException`) |
+| `InternalErrorInfo` | `internalMessage` | The exception message (logs only) |
+| `InternalErrorInfo` | `severity` | `Critical` |
+| `InternalErrorInfo` | `exception` | The original `SomeException` |
+| `InternalErrorInfo` | `callStack` | Haskell call chain at the `tryRail` call site |
 
 ### `CaughtException`
 
 The error type produced by `tryRail`. It wraps `SomeException` and implements `HasErrorInfo`, so it works anywhere a Railway error is expected:
 
 ```haskell
-newtype CaughtException = CaughtException SomeException
+data CaughtException = CaughtException
+  { caughtCode      :: Text
+  , caughtEx        :: SomeException
+  , caughtCallStack :: Maybe CallStack
+  }
 ```
 
-You can also use it directly if you catch exceptions yourself:
+When produced by `tryRail`, `caughtCode` defaults to `"UNCAUGHT_EXCEPTION"` and `caughtCallStack` is captured automatically at the call site.
+
+Use it directly when you catch exceptions yourself and want a domain-specific code:
 
 ```haskell
 import qualified Control.Exception as E
 
-safeAction :: Rail ()
-safeAction = do
-  result <- liftIO $ E.try someIO
+safeQuery :: Rail Row
+safeQuery = do
+  result <- liftIO $ E.try runQuery
   case result of
-    Right val -> process val
-    Left ex   -> throwError (ApplicationError (CaughtException ex))
+    Right row -> pure row
+    Left ex   -> throwError (ApplicationError (CaughtException "DB_QUERY_FAILED" ex Nothing))
 ```
 
 ### `runRail`
@@ -223,23 +240,34 @@ Typeclass connecting your domain error types to the standard error format:
 
 ```haskell
 class HasErrorInfo e where
-  errorInfo :: e -> ErrorInfo
+  publicErrorInfo   :: e -> PublicErrorInfo
+  internalErrorInfo :: e -> InternalErrorInfo  -- has a default implementation
 ```
 
-### `ErrorInfo`
+`internalErrorInfo` defaults to `Error` severity with all optional fields set to `Nothing`. Override it when your error carries sensitive diagnostic context for logging.
 
-Holds all metadata for an error. Fields are split by visibility:
+### `PublicErrorInfo` and `InternalErrorInfo`
+
+Error data is split into two records by visibility:
+
+**`PublicErrorInfo`** — serialized to JSON, safe to return to callers:
 
 | Field | JSON | Purpose |
 | --- | --- | --- |
-| `publicMessage` | ✅ as `"message"` | Safe to show end users |
+| `message` | ✅ | Human-readable message safe to show end users |
 | `code` | ✅ | Machine-readable identifier |
-| `details` | ✅ | Extra JSON context (user ID, resource ID, etc.) |
-| `internalMessage` | ❌ | Sensitive details for logs only |
-| `severity` | ❌ | `Error` or `Critical`, for monitoring |
-| `exception` | ❌ | Underlying exception, for debugging only |
+| `details` | ✅ | Extra JSON context (resource ID, etc.) |
 
-Fields marked ❌ are intentionally excluded from JSON serialization to prevent accidental exposure in API responses.
+**`InternalErrorInfo`** — never serialized to public responses, for logging and monitoring only:
+
+| Field | JSON | Purpose |
+| --- | --- | --- |
+| `severity` | ❌ | `Error` or `Critical`, for monitoring |
+| `internalMessage` | ❌ | Sensitive details for logs (stack traces, DB info) |
+| `exception` | ❌ | Underlying exception, for debugging only |
+| `requestInfo` | ❌ | Request-specific tracing data (request ID, user ID, etc.) |
+| `component` | ❌ | Subsystem label (`"auth"`, `"payment"`) for log filtering |
+| `callStack` | ❌ | Haskell call chain at the throw site (requires `HasCallStack`) |
 
 ### Error Severity
 
@@ -257,14 +285,17 @@ Use `Critical` for errors that need immediate attention (e.g., data corruption, 
 data DbError = ConnectionFailed deriving (Show)
 
 instance HasErrorInfo DbError where
-  errorInfo ConnectionFailed = ErrorInfo
-    { publicMessage   = "Service temporarily unavailable"
-    , internalMessage = Just "Postgres replica at 10.0.0.5:5432 unreachable"
-    , code            = "DB_CONNECTION_FAILED"
-    , severity        = Critical
-    , exception       = Nothing
-    , details         = Nothing
-    }
+  publicErrorInfo ConnectionFailed =
+    PublicErrorInfo
+      { message = "Service temporarily unavailable"
+      , code    = "DB_CONNECTION_FAILED"
+      , details = Nothing
+      }
+  internalErrorInfo ConnectionFailed =
+    (internalErrorInfo ConnectionFailed)
+      { internalMessage = Just "Postgres replica at 10.0.0.5:5432 unreachable"
+      , severity        = Critical
+      }
 
 pipeline :: Rail ()
 pipeline = do
@@ -274,7 +305,7 @@ pipeline = do
 
 ## JSON Serialization
 
-`RailError` implements `ToJSON` via `aeson`. A failed computation serializes as a JSON array of error objects:
+`RailError` implements `ToJSON` via `aeson`. A failed computation serializes as a JSON array of error objects, using only the `PublicErrorInfo` fields:
 
 ```haskell
 import Data.Aeson (encode)
