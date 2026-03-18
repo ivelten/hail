@@ -21,9 +21,9 @@ data TestError = ErrA | ErrB | ErrC
   deriving (Show, Eq)
 
 instance HasErrorInfo TestError where
-  publicErrorInfo ErrA = PublicErrorInfo { message = "Error A", code = "ERR_A", details = Nothing }
-  publicErrorInfo ErrB = PublicErrorInfo { message = "Error B", code = "ERR_B", details = Nothing }
-  publicErrorInfo ErrC = PublicErrorInfo { message = "Error C", code = "ERR_C", details = Nothing }
+  publicErrorInfo ErrA = PublicErrorInfo { publicMessage = "Error A", code = "ERR_A", details = Nothing }
+  publicErrorInfo ErrB = PublicErrorInfo { publicMessage = "Error B", code = "ERR_B", details = Nothing }
+  publicErrorInfo ErrC = PublicErrorInfo { publicMessage = "Error C", code = "ERR_C", details = Nothing }
 
 throw :: TestError -> Rail ()
 throw e = throwError (SomeError e)

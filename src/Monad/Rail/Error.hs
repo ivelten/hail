@@ -80,7 +80,7 @@ data PublicErrorInfo = PublicErrorInfo
     -- internal IP addresses, or stack traces.
     --
     -- Example: @\"Invalid email format\"@
-    message :: Text,
+    publicMessage :: Text,
     -- | A machine-readable error code that categorizes the type of error.
     --
     -- Error codes are useful for:
@@ -112,15 +112,16 @@ instance ToJSON PublicErrorInfo where
   toJSON pub =
     object $
       catMaybes
-        [ Just ("message" .= message pub),
+        [ Just ("message" .= publicMessage pub),
           Just ("code" .= code pub),
           ("details" .=) <$> details pub
         ]
 
 -- | Contains internal diagnostic information about an application error.
 --
--- No fields in this record are included in the public JSON output. This record is
--- intended exclusively for logging, monitoring, and debugging purposes.
+-- This record implements 'ToJSON' so it can be serialized for server-side logging
+-- and monitoring. However, 'SomeError'\'s 'ToJSON' instance delegates only to
+-- 'PublicErrorInfo', so none of these fields ever appear in public API responses.
 --
 -- See 'PublicErrorInfo' for the complementary record holding user-facing data.
 --
@@ -226,7 +227,7 @@ instance ToJSON InternalErrorInfo where
 class HasErrorInfo e where
   -- | Converts the error into public-facing 'PublicErrorInfo'.
   --
-  -- Implement this method to define the user-visible message, machine-readable
+  -- Implement this method to define the user-visible 'publicMessage', machine-readable
   -- code, and optional public context for your error type.
   publicErrorInfo :: e -> PublicErrorInfo
 
@@ -252,7 +253,7 @@ class HasErrorInfo e where
 -- compatible with the Railway error system via its 'HasErrorInfo' instance.
 -- It is the error type produced by 'tryRail' when an IO action throws.
 --
--- The 'message' of the 'PublicErrorInfo' is intentionally generic so that internal
+-- The 'publicMessage' of the 'PublicErrorInfo' is intentionally generic so that internal
 -- details are never accidentally exposed to end users. The original exception is
 -- stored in the 'exception' field of 'InternalErrorInfo' for logging and debugging.
 --
@@ -287,7 +288,7 @@ instance Show CaughtException where
 instance HasErrorInfo CaughtException where
   publicErrorInfo ce =
     PublicErrorInfo
-      { message = "An unexpected error occurred",
+      { publicMessage = "An unexpected error occurred",
         code = caughtCode ce,
         details = Nothing
       }
@@ -310,6 +311,13 @@ instance HasErrorInfo CaughtException where
 --
 -- This is particularly useful when you have multiple error sources (e.g., validation errors,
 -- database errors, network errors) and want to combine them in a single computation.
+--
+-- == JSON serialization
+--
+-- 'SomeError'\'s 'ToJSON' instance serializes __only__ the 'PublicErrorInfo' fields.
+-- 'InternalErrorInfo' is intentionally excluded so that sensitive diagnostic data
+-- (internal messages, call stacks, exceptions) is never accidentally exposed in API responses.
+-- Use 'internalErrorInfo' directly if you need to serialize that data for server-side logging.
 --
 -- == Example
 --

@@ -32,21 +32,21 @@ data UserError
 instance HasErrorInfo UserError where
   publicErrorInfo NameEmpty =
     PublicErrorInfo
-      { message = "Name cannot be empty"
-      , code    = "USER_NAME_EMPTY"
-      , details = Nothing
+      { publicMessage = "Name cannot be empty"
+      , code          = "USER_NAME_EMPTY"
+      , details       = Nothing
       }
   publicErrorInfo EmailInvalid =
     PublicErrorInfo
-      { message = "Invalid email format"
-      , code    = "USER_EMAIL_INVALID"
-      , details = Nothing
+      { publicMessage = "Invalid email format"
+      , code          = "USER_EMAIL_INVALID"
+      , details       = Nothing
       }
   publicErrorInfo AgeTooLow =
     PublicErrorInfo
-      { message = "Must be at least 18 years old"
-      , code    = "USER_AGE_TOO_LOW"
-      , details = Nothing
+      { publicMessage = "Must be at least 18 years old"
+      , code          = "USER_AGE_TOO_LOW"
+      , details       = Nothing
       }
 ```
 
@@ -192,7 +192,7 @@ The resulting error for a caught exception will have:
 
 | Info | Field | Value |
 | --- | --- | --- |
-| `PublicErrorInfo` | `message` | `"An unexpected error occurred"` |
+| `PublicErrorInfo` | `publicMessage` | `"An unexpected error occurred"` |
 | `PublicErrorInfo` | `code` | `"UNCAUGHT_EXCEPTION"` (customizable via `CaughtException`) |
 | `InternalErrorInfo` | `internalMessage` | The exception message (logs only) |
 | `InternalErrorInfo` | `severity` | `Critical` |
@@ -275,20 +275,20 @@ Error data is split into two records by visibility:
 
 | Field | JSON | Purpose |
 | --- | --- | --- |
-| `message` | ✅ | Human-readable message safe to show end users |
+| `publicMessage` | ✅ | Human-readable message safe to show end users |
 | `code` | ✅ | Machine-readable identifier |
 | `details` | ✅ | Extra JSON context (resource ID, etc.) |
 
-**`InternalErrorInfo`** — never serialized to public responses, for logging and monitoring only:
+**`InternalErrorInfo`** — for logging and monitoring only. It implements `ToJSON` so you can log it server-side, but `SomeError`'s `ToJSON` instance only serializes `PublicErrorInfo`, so internal fields are never included in API responses:
 
-| Field | JSON | Purpose |
-| --- | --- | --- |
-| `severity` | ❌ | `Error` or `Critical`, for monitoring |
-| `internalMessage` | ❌ | Sensitive details for logs (stack traces, DB info) |
-| `exception` | ❌ | Underlying exception, for debugging only |
-| `requestInfo` | ❌ | Request-specific tracing data (request ID, user ID, etc.) |
-| `component` | ❌ | Subsystem label (`"auth"`, `"payment"`) for log filtering |
-| `callStack` | ❌ | Haskell call chain at the throw site (requires `HasCallStack`) |
+| Field | Purpose |
+| --- | --- |
+| `severity` | `Error` or `Critical`, for monitoring |
+| `internalMessage` | Sensitive details for logs (stack traces, DB info) |
+| `exception` | Underlying exception, for debugging only |
+| `requestInfo` | Request-specific tracing data (request ID, user ID, etc.) |
+| `component` | Subsystem label (`"auth"`, `"payment"`) for log filtering |
+| `callStack` | Haskell call chain at the throw site (requires `HasCallStack`) |
 
 ### Error Severity
 
@@ -308,8 +308,8 @@ data DbError = ConnectionFailed deriving (Show)
 instance HasErrorInfo DbError where
   publicErrorInfo ConnectionFailed =
     PublicErrorInfo
-      { message = "Service temporarily unavailable"
-      , code    = "DB_CONNECTION_FAILED"
+      { publicMessage = "Service temporarily unavailable"
+      , code          = "DB_CONNECTION_FAILED"
       , details = Nothing
       }
   internalErrorInfo ConnectionFailed =
@@ -326,7 +326,7 @@ pipeline = do
 
 ## JSON Serialization
 
-`Failure` implements `ToJSON` via `aeson`. A failed computation serializes as a JSON array of error objects, using only the `PublicErrorInfo` fields:
+`Failure` implements `ToJSON` via `aeson`. A failed computation serializes as a JSON array of error objects. Each error is a `SomeError`, whose `ToJSON` instance delegates only to `PublicErrorInfo` — internal diagnostic fields are never included in the output:
 
 ```haskell
 import Data.Aeson (encode)

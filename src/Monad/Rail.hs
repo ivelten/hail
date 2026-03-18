@@ -28,7 +28,7 @@
 -- >>> instance HasErrorInfo UserError where
 -- >>>   publicErrorInfo NameEmpty =
 -- >>>     PublicErrorInfo
--- >>>       { message = "Name cannot be empty"
+-- >>>       { publicMessage = "Name cannot be empty"
 -- >>>       , code    = "USER_NAME_EMPTY"
 -- >>>       , details = Nothing
 -- >>>       }
@@ -71,7 +71,7 @@
 --
 -- Each error carries two separate records:
 --
--- * 'PublicErrorInfo' - Safe for end users: 'message', 'code', 'details'.
+-- * 'PublicErrorInfo' - Safe for end users: 'publicMessage', 'code', 'details'.
 --   Serialized to JSON in API responses; null fields are omitted.
 -- * 'InternalErrorInfo' - Sensitive diagnostics: 'internalMessage', 'severity',
 --   'exception', 'requestInfo', 'component', 'callStack'.

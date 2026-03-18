@@ -24,13 +24,13 @@ data TestError = TestErrorA | TestErrorB
 instance HasErrorInfo TestError where
   publicErrorInfo TestErrorA =
     PublicErrorInfo
-      { message = "Error A occurred",
+      { publicMessage = "Error A occurred",
         code = "TEST_ERROR_A",
         details = Nothing
       }
   publicErrorInfo TestErrorB =
     PublicErrorInfo
-      { message = "Error B occurred",
+      { publicMessage = "Error B occurred",
         code = "TEST_ERROR_B",
         details = Just (object ["key" .= ("value" :: Text)])
       }
@@ -130,7 +130,7 @@ spec = do
   describe "PublicErrorInfo" $ do
     let pub =
           PublicErrorInfo
-            { message = "Something went wrong",
+            { publicMessage = "Something went wrong",
               code = "GENERIC_ERROR",
               details = Nothing
             }
@@ -227,7 +227,7 @@ spec = do
 
     it "publicErrorInfo message is always the generic safe message" $ do
       let ce = CaughtException "ANY_CODE" (Ex.SomeException (userError "internal detail")) Nothing
-      message (publicErrorInfo ce) `shouldBe` "An unexpected error occurred"
+      publicMessage (publicErrorInfo ce) `shouldBe` "An unexpected error occurred"
 
     it "internalErrorInfo has Critical severity" $ do
       let ce = CaughtException "CODE" (Ex.SomeException (userError "oops")) Nothing
@@ -253,7 +253,7 @@ spec = do
 
     it "publicErrorInfo extracts correct message" $ do
       let pub = publicErrorInfo (mkSomeError TestErrorA)
-      message pub `shouldBe` "Error A occurred"
+      publicMessage pub `shouldBe` "Error A occurred"
 
     it "internalErrorInfo extracts correct severity" $ do
       let internal = internalErrorInfo (mkSomeError TestErrorA)
