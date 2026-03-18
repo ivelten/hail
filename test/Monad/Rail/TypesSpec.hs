@@ -1,3 +1,4 @@
+{-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 module Monad.Rail.TypesSpec (spec) where
@@ -5,6 +6,7 @@ module Monad.Rail.TypesSpec (spec) where
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.State (StateT, runStateT)
 import qualified Control.Exception as Ex
+import Data.Data (Data)
 import Data.IORef (newIORef, readIORef, modifyIORef)
 import Data.List (isInfixOf)
 import Data.Maybe (isJust)
@@ -20,10 +22,17 @@ import Test.Hspec
 data TestError = ErrA | ErrB | ErrC
   deriving (Show, Eq)
 
+data TryError = QueryFailed | ConnectionLost
+  deriving (Show, Data)
+
+instance Descriptive TryError where
+  description QueryFailed    = "A database query failed"
+  description ConnectionLost = "Lost connection to the database"
+
 instance HasErrorInfo TestError where
-  publicErrorInfo ErrA = PublicErrorInfo { publicMessage = "Error A", code = "ERR_A", details = Nothing }
-  publicErrorInfo ErrB = PublicErrorInfo { publicMessage = "Error B", code = "ERR_B", details = Nothing }
-  publicErrorInfo ErrC = PublicErrorInfo { publicMessage = "Error C", code = "ERR_C", details = Nothing }
+  publicErrorInfo ErrA = PublicErrorInfo { publicMessage = "Error A", code = "ErrA", details = Nothing }
+  publicErrorInfo ErrB = PublicErrorInfo { publicMessage = "Error B", code = "ErrB", details = Nothing }
+  publicErrorInfo ErrC = PublicErrorInfo { publicMessage = "Error C", code = "ErrC", details = Nothing }
 
 throw :: TestError -> Rail ()
 throw e = throwError (SomeError e)
@@ -90,7 +99,7 @@ spec = do
         Right _ -> expectationFailure "expected Left, got Right"
         Left err ->
           let pub = publicErrorInfo (NE.head (getErrors err))
-           in code pub `shouldBe` "ERR_A"
+           in code pub `shouldBe` "ErrA"
 
     it "short-circuits: code after throwError is not executed" $ do
       ref <- newIORef (0 :: Int)
@@ -115,7 +124,7 @@ spec = do
           Right _ -> expectationFailure "expected Left, got Right"
           Left err -> do
             length (getErrors err) `shouldBe` 1
-            (code . publicErrorInfo . NE.head . getErrors) err `shouldBe` "ERR_A"
+            (code . publicErrorInfo . NE.head . getErrors) err `shouldBe` "ErrA"
 
     describe "Right <!> Left" $ do
       it "fails with the second error only" $ do
@@ -124,7 +133,7 @@ spec = do
           Right _ -> expectationFailure "expected Left, got Right"
           Left err -> do
             length (getErrors err) `shouldBe` 1
-            (code . publicErrorInfo . NE.head . getErrors) err `shouldBe` "ERR_B"
+            (code . publicErrorInfo . NE.head . getErrors) err `shouldBe` "ErrB"
 
     describe "Left <!> Left" $ do
       it "accumulates errors from both sides" $ do
@@ -139,7 +148,7 @@ spec = do
           Right _ -> expectationFailure "expected Left, got Right"
           Left err ->
             let codes = map (code . publicErrorInfo) (NE.toList (getErrors err))
-             in codes `shouldBe` ["ERR_A", "ERR_B"]
+             in codes `shouldBe` ["ErrA", "ErrB"]
 
     describe "chaining three validations" $ do
       it "accumulates all three errors when all fail" $ do
@@ -191,7 +200,7 @@ spec = do
         Right _ -> expectationFailure "expected Left, got Right"
         Left _  -> pure ()
 
-    it "wraps the exception as a single UNCAUGHT_EXCEPTION error" $ do
+    it "wraps the exception as a single UncaughtException error" $ do
       let boom = Ex.throwIO (userError "oops")
       result <- runRail (tryRail boom :: Rail ())
       case result of
@@ -199,7 +208,7 @@ spec = do
         Left err -> do
           let errs = getErrors err
           length errs `shouldBe` 1
-          (code . publicErrorInfo . NE.head) errs `shouldBe` "UNCAUGHT_EXCEPTION"
+          (code . publicErrorInfo . NE.head) errs `shouldBe` "UncaughtException"
 
     it "the error has Critical severity" $ do
       let boom = Ex.throwIO (userError "oops")
@@ -338,6 +347,64 @@ spec = do
       let ex = Ex.SomeException (userError "fail")
       _ <- runRail $ do
         _ <- throwCaughtEx "MY_CODE" ex
+        liftIO $ modifyIORef ref (+ 1)
+      val <- readIORef ref
+      val `shouldBe` 0
+
+  describe "tryRailWithError" $ do
+    it "returns Right when the IO action succeeds" $ do
+      result <- runRail (tryRailWithError (\_ -> QueryFailed) (pure (42 :: Int)))
+      case result of
+        Left _    -> expectationFailure "expected Right, got Left"
+        Right val -> val `shouldBe` 42
+
+    it "returns Left when the IO action throws" $ do
+      let boom = Ex.throwIO (userError "oops")
+      result <- runRail (tryRailWithError (\_ -> ConnectionLost) boom :: Rail ())
+      case result of
+        Right _ -> expectationFailure "expected Left, got Right"
+        Left _  -> pure ()
+
+    it "uses the error code derived from the Descriptive value" $ do
+      let boom = Ex.throwIO (userError "oops")
+      result <- runRail (tryRailWithError (\_ -> QueryFailed) boom :: Rail ())
+      case result of
+        Right _ -> expectationFailure "expected Left, got Right"
+        Left err ->
+          (code . publicErrorInfo . NE.head . getErrors) err `shouldBe` "QueryFailed"
+
+    it "uses the description as the public message" $ do
+      let boom = Ex.throwIO (userError "oops")
+      result <- runRail (tryRailWithError (\_ -> QueryFailed) boom :: Rail ())
+      case result of
+        Right _ -> expectationFailure "expected Left, got Right"
+        Left err ->
+          (publicMessage . publicErrorInfo . NE.head . getErrors) err
+            `shouldBe` "A database query failed"
+
+    it "passes the caught exception to the builder function" $ do
+      let boom = Ex.throwIO (userError "specific detail")
+          mkErr ex = if "specific" `isInfixOf` show ex then QueryFailed else ConnectionLost
+      result <- runRail (tryRailWithError mkErr boom :: Rail ())
+      case result of
+        Right _ -> expectationFailure "expected Left, got Right"
+        Left err ->
+          (code . publicErrorInfo . NE.head . getErrors) err `shouldBe` "QueryFailed"
+
+    it "captures a call stack (callStack is Just)" $ do
+      let boom = Ex.throwIO (userError "oops")
+      result <- runRail (tryRailWithError (\_ -> ConnectionLost) boom :: Rail ())
+      case result of
+        Right _ -> expectationFailure "expected Left, got Right"
+        Left err ->
+          let internal = (internalErrorInfo . NE.head . getErrors) err
+           in callStack internal `shouldSatisfy` isJust
+
+    it "short-circuits: code after tryRailWithError failure is not executed" $ do
+      ref <- newIORef (0 :: Int)
+      let boom = Ex.throwIO (userError "fail")
+      _ <- runRail $ do
+        _ <- tryRailWithError (\_ -> ConnectionLost) (boom :: IO Int)
         liftIO $ modifyIORef ref (+ 1)
       val <- readIORef ref
       val `shouldBe` 0

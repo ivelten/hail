@@ -1,3 +1,5 @@
+{-# LANGUAGE DefaultSignatures #-}
+{-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -12,18 +14,40 @@
 --
 -- == Quick Start
 --
--- 1. Define your error type and implement 'HasErrorInfo':
+-- === Simple errors
 --
+-- For enum-style error types, derive 'Data.Data.Data' and implement 'Descriptive'.
+-- The 'publicErrorInfo' default derives the error 'code' from the constructor name
+-- and the 'publicMessage' from 'description':
+--
+-- >>> {-# LANGUAGE DeriveDataTypeable #-}
+-- >>>
 -- >>> data UserError = NameEmpty | EmailInvalid
--- >>> instance HasErrorInfo UserError where
--- >>>   publicErrorInfo NameEmpty   = PublicErrorInfo "Name cannot be empty" "USER_NAME_EMPTY" Nothing
--- >>>   publicErrorInfo EmailInvalid = PublicErrorInfo "Email is invalid" "USER_EMAIL_INVALID" Nothing
+-- >>>   deriving (Show, Data)
+-- >>>
+-- >>> instance Descriptive UserError where
+-- >>>   description NameEmpty    = "Name cannot be empty"
+-- >>>   description EmailInvalid = "Email format is invalid"
+-- >>>
+-- >>> instance HasErrorInfo UserError
 --
--- 2. Wrap it in 'SomeError' to use in your Railway:
+-- === Full control
+--
+-- Implement 'HasErrorInfo' directly when you need custom codes or 'details':
+--
+-- >>> instance HasErrorInfo UserError where
+-- >>>   publicErrorInfo NameEmpty =
+-- >>>     PublicErrorInfo "Name cannot be empty" "UserNameEmpty" Nothing
+-- >>>   publicErrorInfo EmailInvalid =
+-- >>>     PublicErrorInfo "Email format is invalid" "UserEmailInvalid" Nothing
+--
+-- === Running your Railway
+--
+-- 1. Wrap errors in 'SomeError':
 --
 -- >>> throwError (SomeError NameEmpty)
 --
--- 3. Run your Railway and handle the result:
+-- 2. Run and handle the result:
 --
 -- >>> result <- runRail myComputation
 -- >>> case result of
@@ -32,11 +56,13 @@
 module Monad.Rail.Error
   ( ErrorSeverity (..),
     PublicErrorInfo (..),
+    Descriptive (..),
     RequestContent (..),
     RequestInfo (..),
     InternalErrorInfo (..),
     HasErrorInfo (..),
     SomeError (..),
+    UncaughtException (..),
     CaughtException (..),
     Failure (..),
   )
@@ -44,8 +70,9 @@ where
 
 import qualified Control.Exception as E
 import Data.Aeson (ToJSON (..), Value, object, (.=))
+import Data.Data (Data, toConstr)
 import Data.List.NonEmpty (NonEmpty)
-import Data.Maybe (catMaybes)
+import Data.Maybe (catMaybes, fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
 import GHC.Stack (CallStack, prettyCallStack)
@@ -92,7 +119,7 @@ data PublicErrorInfo = PublicErrorInfo
     -- * Routing errors to appropriate handlers
     -- * Building error catalogs
     --
-    -- Example codes: @\"USER_NAME_EMPTY\"@, @\"DB_CONNECTION_FAILED\"@
+    -- Example codes: @\"UserNameEmpty\"@, @\"DbConnectionFailed\"@
     code :: Text,
     -- | Optional context details associated with the error.
     --
@@ -208,9 +235,10 @@ instance ToJSON RequestInfo where
 -- >>>   | otherwise = pure ()
 -- >>>
 -- >>> instance HasErrorInfo AgeError where
--- >>>   publicErrorInfo AgeTooNegative = PublicErrorInfo "Age must be non-negative" "AGE_NEGATIVE" Nothing
+-- >>>   publicErrorInfo AgeTooNegative = PublicErrorInfo "Age must be non-negative" "AgeNegative" Nothing
 -- >>>   internalErrorInfo AgeTooNegative = (internalErrorInfo AgeTooNegative)
 -- >>>     { callStack = Just GHC.Stack.callStack }
+-- >>>   publicErrorInfo AgeTooNegative = PublicErrorInfo "Age must be non-negative" "AgeNegative" Nothing
 --
 -- Note: if both 'callStack' (from this module) and 'GHC.Stack.callStack' (the
 -- implicit-parameter accessor) are in scope, qualify the latter to avoid ambiguity.
@@ -294,27 +322,70 @@ instance ToJSON InternalErrorInfo where
           ("callStack" .=) . T.pack . prettyCallStack <$> callStack internal
         ]
 
+-- | Provides a human-readable description and a machine-readable name for an error,
+-- used as 'publicMessage' and 'code' respectively in 'PublicErrorInfo' when relying
+-- on the default 'HasErrorInfo' implementation.
+--
+-- Implement this alongside a no-body 'HasErrorInfo' instance for simple, enum-style
+-- error types. See 'HasErrorInfo' for the full usage pattern.
+class Descriptive a where
+  -- | Returns a human-readable description safe to display to end users.
+  description :: a -> Text
+
+  -- | Returns the machine-readable error code for this value.
+  --
+  -- The default implementation derives the code from the constructor name via
+  -- 'Data.Data.toConstr', requiring a 'Data.Data.Data' instance. Override this
+  -- method when you need a code that differs from the constructor name.
+  --
+  -- Example: @name NameEmpty = \"UserNameEmpty\"@
+  name :: a -> Text
+  default name :: (Data a) => a -> Text
+  name a = T.pack (show (toConstr a))
+
 -- | A type class for converting custom error types into 'PublicErrorInfo' and 'InternalErrorInfo'.
 --
--- Implement this type class for your custom error types to integrate them with the
--- Railway-Oriented monad. This allows your errors to be automatically converted to
--- a standard format that can be logged, serialized, and combined with other errors.
+-- There are two ways to integrate your error type:
 --
--- The 'internalErrorInfo' method has a default implementation that returns an
--- 'InternalErrorInfo' with all optional fields set to 'Nothing' and severity set to
--- 'Error'. Override it when your error needs to carry diagnostic context.
+-- == Simple errors: 'Descriptive' + 'Data.Data.Data'
 --
--- == Example
+-- For enum-style error types, derive 'Data.Data.Data' and implement 'Descriptive'.
+-- The default 'publicErrorInfo' calls 'name' for the 'code' (which by default derives
+-- it from the constructor name via 'Data.Data.toConstr') and 'description' for the
+-- 'publicMessage'. No 'HasErrorInfo' body is needed:
 --
--- >>> data UserError = NameEmpty | EmailInvalid
+-- >>> {-# LANGUAGE DeriveDataTypeable #-}
 -- >>>
+-- >>> data UserError = NameEmpty | EmailInvalid
+-- >>>   deriving (Show, Data)
+-- >>>
+-- >>> instance Descriptive UserError where
+-- >>>   description NameEmpty    = "Name cannot be empty"
+-- >>>   description EmailInvalid = "Email format is invalid"
+-- >>>
+-- >>> instance HasErrorInfo UserError
+-- >>> -- publicErrorInfo NameEmpty
+-- >>> --   = PublicErrorInfo { publicMessage = "Name cannot be empty"
+-- >>> --                     , code          = "NameEmpty"
+-- >>> --                     , details       = Nothing }
+--
+-- Note: the error 'code' is derived directly from the constructor name, so renaming
+-- a constructor silently changes its code. Treat constructor names as part of your
+-- public API contract when using this approach.
+--
+-- == Full control: implement 'publicErrorInfo' manually
+--
+-- Implement 'publicErrorInfo' directly when you need custom codes, per-constructor
+-- 'details', or constructor-specific behaviour. You can still rely on the default
+-- 'internalErrorInfo' and only override it when needed:
+--
 -- >>> instance HasErrorInfo UserError where
 -- >>>   publicErrorInfo NameEmpty =
--- >>>     PublicErrorInfo "Name cannot be empty" "USER_NAME_EMPTY" Nothing
+-- >>>     PublicErrorInfo "Name cannot be empty" "UserNameEmpty" Nothing
 -- >>>   publicErrorInfo EmailInvalid =
--- >>>     PublicErrorInfo "Email format is invalid" "USER_EMAIL_INVALID" Nothing
+-- >>>     PublicErrorInfo "Email format is invalid" "UserEmailInvalid" Nothing
 -- >>>
--- >>>   -- Override internalErrorInfo when you have extra diagnostic context:
+-- >>>   -- Override internalErrorInfo only when you have extra diagnostic context:
 -- >>>   internalErrorInfo NameEmpty =
 -- >>>     (internalErrorInfo NameEmpty)
 -- >>>       { internalMessage = Just "name field was empty string after trimming"
@@ -323,9 +394,17 @@ instance ToJSON InternalErrorInfo where
 class HasErrorInfo e where
   -- | Converts the error into public-facing 'PublicErrorInfo'.
   --
-  -- Implement this method to define the user-visible 'publicMessage', machine-readable
-  -- code, and optional public context for your error type.
+  -- The default implementation requires 'Descriptive': it uses 'name' for 'code'
+  -- and 'description' for 'publicMessage', with 'details' set to 'Nothing'.
+  -- Override this method for custom codes or details.
   publicErrorInfo :: e -> PublicErrorInfo
+  default publicErrorInfo :: (Descriptive e) => e -> PublicErrorInfo
+  publicErrorInfo e =
+    PublicErrorInfo
+      { publicMessage = description e,
+        code = name e,
+        details = Nothing
+      }
 
   -- | Converts the error into internal diagnostic 'InternalErrorInfo'.
   --
@@ -346,6 +425,21 @@ class HasErrorInfo e where
         callStack = Nothing
       }
 
+-- | Marker type for the default error code and message used by
+-- 'Monad.Rail.Types.tryRail' when an IO action throws an uncaught exception.
+--
+-- Its 'Descriptive' instance provides the generic public message shown to end
+-- users and the default error code @\"UncaughtException\"@ derived from the
+-- constructor name. Both are consumed by 'CaughtException'\'s 'HasErrorInfo'
+-- instance so the values stay in one place.
+data UncaughtException = UncaughtException
+  deriving (Show, Data)
+
+instance Descriptive UncaughtException where
+  description _ = "An unexpected error occurred"
+
+instance HasErrorInfo UncaughtException
+
 -- | Wrapper for caught exceptions that can be used as an error type.
 --
 -- This type captures a 'E.SomeException' thrown in 'IO' and makes it
@@ -357,7 +451,7 @@ class HasErrorInfo e where
 -- stored in the 'exception' field of 'InternalErrorInfo' for logging and debugging.
 --
 -- 'caughtCode' lets you assign a domain-specific error code when you catch
--- exceptions manually, rather than relying on the default @\"UNCAUGHT_EXCEPTION\"@:
+-- exceptions manually, rather than relying on the default @\"UncaughtException\"@:
 --
 -- >>> import qualified Control.Exception as E
 -- >>>
@@ -366,7 +460,7 @@ class HasErrorInfo e where
 -- >>>   result <- liftIO $ E.try runQuery
 -- >>>   case result of
 -- >>>     Right row -> pure row
--- >>>     Left ex   -> throwError (SomeError (CaughtException "DB_QUERY_FAILED" ex Nothing))
+-- >>>     Left ex   -> throwError (SomeError (CaughtException "DbQueryFailed" ex Nothing Nothing))
 --
 -- Or use 'Monad.Rail.Types.throwCaughtEx' for a more concise form that also captures the call stack automatically:
 --
@@ -375,19 +469,25 @@ class HasErrorInfo e where
 -- >>>   result <- liftIO $ E.try runQuery
 -- >>>   case result of
 -- >>>     Right row -> pure row
--- >>>     Left ex   -> throwCaughtEx "DB_QUERY_FAILED" ex
+-- >>>     Left ex   -> throwCaughtEx "DbQueryFailed" ex
 --
--- When using 'Monad.Rail.Types.tryRail', the code defaults to @\"UNCAUGHT_EXCEPTION\"@ and the
+-- When using 'Monad.Rail.Types.tryRail', the code defaults to @\"UncaughtException\"@ and the
 -- 'callStack' is captured automatically at the call site.
 data CaughtException = CaughtException
   { -- | Machine-readable error code exposed in 'PublicErrorInfo'.
-    -- Defaults to @\"UNCAUGHT_EXCEPTION\"@ when produced by 'Monad.Rail.Types.tryRail'.
+    -- Defaults to @\"UncaughtException\"@ when produced by 'Monad.Rail.Types.tryRail'.
     caughtCode :: Text,
     -- | The original exception.
     caughtEx :: E.SomeException,
     -- | Optional Haskell call stack at the catch site.
     -- Populated automatically by 'Monad.Rail.Types.tryRail' via 'GHC.Stack.HasCallStack'.
-    caughtCallStack :: Maybe CallStack
+    caughtCallStack :: Maybe CallStack,
+    -- | Optional public message override for 'PublicErrorInfo'.
+    --
+    -- When 'Nothing', falls back to @'description' 'UncaughtException'@
+    -- (@\"An unexpected error occurred\"@). Set this via
+    -- 'Monad.Rail.Types.tryRailWithError' to surface a domain-specific message.
+    caughtMessage :: Maybe Text
   }
 
 instance Show CaughtException where
@@ -396,7 +496,7 @@ instance Show CaughtException where
 instance HasErrorInfo CaughtException where
   publicErrorInfo ce =
     PublicErrorInfo
-      { publicMessage = "An unexpected error occurred",
+      { publicMessage = fromMaybe (description UncaughtException) (caughtMessage ce),
         code = caughtCode ce,
         details = Nothing
       }

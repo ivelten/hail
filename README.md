@@ -20,35 +20,31 @@ build-depends:
 
 ### 1. Define your error type
 
+For simple enum-style errors, derive `Data` and implement `Descriptive`. The error code is derived automatically from the constructor name:
+
 ```haskell
+{-# LANGUAGE DeriveDataTypeable #-}
+
 import Monad.Rail
 
 data UserError
   = NameEmpty
   | EmailInvalid
   | AgeTooLow
-  deriving (Show)
+  deriving (Show, Data)
 
-instance HasErrorInfo UserError where
-  publicErrorInfo NameEmpty =
-    PublicErrorInfo
-      { publicMessage = "Name cannot be empty"
-      , code          = "USER_NAME_EMPTY"
-      , details       = Nothing
-      }
-  publicErrorInfo EmailInvalid =
-    PublicErrorInfo
-      { publicMessage = "Invalid email format"
-      , code          = "USER_EMAIL_INVALID"
-      , details       = Nothing
-      }
-  publicErrorInfo AgeTooLow =
-    PublicErrorInfo
-      { publicMessage = "Must be at least 18 years old"
-      , code          = "USER_AGE_TOO_LOW"
-      , details       = Nothing
-      }
+instance Descriptive UserError where
+  description NameEmpty   = "Name cannot be empty"
+  description EmailInvalid = "Invalid email format"
+  description AgeTooLow   = "Must be at least 18 years old"
+
+instance HasErrorInfo UserError
+-- NameEmpty    → { message: "Name cannot be empty",           code: "NameEmpty" }
+-- EmailInvalid → { message: "Invalid email format",           code: "EmailInvalid" }
+-- AgeTooLow    → { message: "Must be at least 18 years old",  code: "AgeTooLow" }
 ```
+
+When you need custom codes or `details`, implement `publicErrorInfo` manually instead — see [`HasErrorInfo`](#haserrorinfo) for the full pattern.
 
 ### 2. Write your validations
 
@@ -98,9 +94,9 @@ Output:
 
 ```json
 [
-  {"message":"Name cannot be empty","code":"USER_NAME_EMPTY"},
-  {"message":"Invalid email format","code":"USER_EMAIL_INVALID"},
-  {"message":"Must be at least 18 years old","code":"USER_AGE_TOO_LOW"}
+  {"message":"Name cannot be empty","code":"NameEmpty"},
+  {"message":"Invalid email format","code":"EmailInvalid"},
+  {"message":"Must be at least 18 years old","code":"AgeTooLow"}
 ]
 ```
 
@@ -174,10 +170,10 @@ Because the code is the first argument, you can partially apply it to create reu
 
 ```haskell
 tryDb :: HasCallStack => IO a -> Rail a
-tryDb = tryRailWithCode "DB_ERROR"
+tryDb = tryRailWithCode "DbError"
 
 tryHttp :: HasCallStack => IO a -> Rail a
-tryHttp = tryRailWithCode "HTTP_ERROR"
+tryHttp = tryRailWithCode "HttpError"
 
 pipeline :: Rail ()
 pipeline = do
@@ -193,11 +189,42 @@ The resulting error for a caught exception will have:
 | Info | Field | Value |
 | --- | --- | --- |
 | `PublicErrorInfo` | `publicMessage` | `"An unexpected error occurred"` |
-| `PublicErrorInfo` | `code` | `"UNCAUGHT_EXCEPTION"` (customizable via `CaughtException`) |
+| `PublicErrorInfo` | `code` | `"UncaughtException"` (customizable via `CaughtException`) |
 | `InternalErrorInfo` | `internalMessage` | The exception message (logs only) |
 | `InternalErrorInfo` | `severity` | `Critical` |
 | `InternalErrorInfo` | `exception` | The original `SomeException` |
 | `InternalErrorInfo` | `callStack` | Haskell call chain at the `tryRail` call site |
+
+### `tryRailWithError`
+
+Like `tryRailWithCode`, but derives the error code and public message from a `Descriptive` value built from the caught exception:
+
+```haskell
+tryRailWithError :: (HasCallStack, Descriptive e) => (SomeException -> e) -> IO a -> Rail a
+```
+
+The error-building function receives the `SomeException` that was thrown, allowing the resulting error to carry information extracted from the exception itself. `name` is used as the error code and `description` as the public message.
+
+```haskell
+{-# LANGUAGE DeriveDataTypeable #-}
+
+data DbError = QueryFailed Text | ConnectionLost
+  deriving (Show, Data)
+
+instance Descriptive DbError where
+  description (QueryFailed _) = "A database query failed"
+  description ConnectionLost  = "Lost connection to the database"
+
+-- Always map to ConnectionLost, ignoring the exception:
+safeQuery :: Rail [Row]
+safeQuery = tryRailWithError (\_ -> ConnectionLost) runQuery
+
+-- Inspect the exception to choose the right constructor:
+safeQuery' :: Rail [Row]
+safeQuery' = tryRailWithError (QueryFailed . T.pack . displayException) runQuery
+```
+
+> **Note:** add `HasCallStack` to any wrapper's own signature so the call stack is captured at each call site rather than frozen at the wrapper's definition.
 
 ### `CaughtException`
 
@@ -208,10 +235,11 @@ data CaughtException = CaughtException
   { caughtCode      :: Text
   , caughtEx        :: SomeException
   , caughtCallStack :: Maybe CallStack
+  , caughtMessage   :: Maybe Text
   }
 ```
 
-When produced by `tryRail`, `caughtCode` defaults to `"UNCAUGHT_EXCEPTION"` and `caughtCallStack` is captured automatically at the call site.
+When produced by `tryRail`, `caughtCode` defaults to `"UncaughtException"`, `caughtCallStack` is captured automatically at the call site, and `caughtMessage` defaults to `Nothing` (falling back to the generic public message `"An unexpected error occurred"`).
 
 Use it directly when you catch exceptions yourself and want a domain-specific code:
 
@@ -223,7 +251,7 @@ safeQuery = do
   result <- liftIO $ E.try runQuery
   case result of
     Right row -> pure row
-    Left ex   -> throwError (SomeError (CaughtException "DB_QUERY_FAILED" ex Nothing))
+    Left ex   -> throwError (SomeError (CaughtException "DbQueryFailed" ex Nothing Nothing))
 ```
 
 Or use `throwCaughtEx` for a more concise form — it also captures the call stack automatically:
@@ -234,7 +262,7 @@ safeQuery = do
   result <- liftIO $ E.try runQuery
   case result of
     Right row -> pure row
-    Left ex   -> throwCaughtEx "DB_QUERY_FAILED" ex
+    Left ex   -> throwCaughtEx "DbQueryFailed" ex
 ```
 
 ### `runRail`
@@ -266,17 +294,69 @@ runAppRail :: AppState -> AppRail a -> IO (Either Failure a, AppState)
 runAppRail initialState = runStateT . runRailT
 ```
 
+### `Descriptive`
+
+Typeclass that supplies the `publicMessage` for the `publicErrorInfo` default:
+
+```haskell
+class Descriptive a where
+  description :: a -> Text
+```
+
+Implement it alongside a no-body `HasErrorInfo` instance for simple error types. Not needed when implementing `publicErrorInfo` manually.
+
 ### `HasErrorInfo`
 
 Typeclass connecting your domain error types to the standard error format:
 
 ```haskell
 class HasErrorInfo e where
-  publicErrorInfo   :: e -> PublicErrorInfo
-  internalErrorInfo :: e -> InternalErrorInfo  -- has a default implementation
+  publicErrorInfo   :: e -> PublicErrorInfo   -- has a default (see below)
+  internalErrorInfo :: e -> InternalErrorInfo -- has a default
 ```
 
-`internalErrorInfo` defaults to `Error` severity with all optional fields set to `Nothing`. Override it when your error carries sensitive diagnostic context for logging.
+There are two ways to use it:
+
+#### Simple errors — `Descriptive` + `Data`
+
+Derive `Data` and implement `Descriptive`. The `publicErrorInfo` default derives `code` from the constructor name via `Data.toConstr` and `publicMessage` from `description`:
+
+```haskell
+{-# LANGUAGE DeriveDataTypeable #-}
+
+data OrderError = ItemOutOfStock | PaymentDeclined
+  deriving (Show, Data)
+
+instance Descriptive OrderError where
+  description ItemOutOfStock   = "One or more items are out of stock"
+  description PaymentDeclined  = "Payment was declined"
+
+instance HasErrorInfo OrderError  -- code = "ItemOutOfStock" or "PaymentDeclined"
+```
+
+> **Note:** the error code is the constructor name verbatim. Renaming a constructor silently changes its code, so treat constructor names as part of your public API contract.
+
+You can still override `internalErrorInfo` while keeping the default `publicErrorInfo`:
+
+```haskell
+instance HasErrorInfo OrderError where
+  internalErrorInfo PaymentDeclined =
+    (internalErrorInfo PaymentDeclined) { severity = Critical }
+```
+
+#### Full control — implement `publicErrorInfo` manually
+
+Use this when you need custom codes, `details`, or constructor-specific logic:
+
+```haskell
+instance HasErrorInfo OrderError where
+  publicErrorInfo ItemOutOfStock =
+    PublicErrorInfo "One or more items are out of stock" "ItemOutOfStock" Nothing
+  publicErrorInfo PaymentDeclined =
+    PublicErrorInfo "Payment was declined" "PaymentDeclined" Nothing
+```
+
+`internalErrorInfo` defaults to `Error` severity with all optional fields set to `Nothing` in both cases. Override it when your error carries sensitive diagnostic context for logging.
 
 ### `PublicErrorInfo` and `InternalErrorInfo`
 
@@ -284,11 +364,11 @@ Error data is split into two records by visibility:
 
 **`PublicErrorInfo`** — serialized to JSON, safe to return to callers:
 
-| Field | JSON | Purpose |
-| --- | --- | --- |
-| `publicMessage` | ✅ | Human-readable message safe to show end users |
-| `code` | ✅ | Machine-readable identifier |
-| `details` | ✅ | Extra JSON context (resource ID, etc.) |
+| Field | Purpose |
+| --- | --- |
+| `publicMessage` | Human-readable message safe to show end users |
+| `code` | Machine-readable identifier |
+| `details` | Extra JSON context (resource ID, etc.) |
 
 **`InternalErrorInfo`** — for logging and monitoring only. It implements `ToJSON` so you can log it server-side, but `SomeError`'s `ToJSON` instance only serializes `PublicErrorInfo`, so internal fields are never included in API responses:
 
@@ -338,7 +418,7 @@ instance HasErrorInfo DbError where
   publicErrorInfo ConnectionFailed =
     PublicErrorInfo
       { publicMessage = "Service temporarily unavailable"
-      , code          = "DB_CONNECTION_FAILED"
+      , code          = "DbConnectionFailed"
       , details = Nothing
       }
   internalErrorInfo ConnectionFailed =

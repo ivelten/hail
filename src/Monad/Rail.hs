@@ -21,17 +21,27 @@
 --
 -- == Quick Start
 --
--- Define your error type:
+-- Define your error type using 'Descriptive' and 'Data.Data.Data' for simple
+-- enum-style errors. The error code is derived automatically from the constructor name:
 --
--- >>> data UserError = NameEmpty | EmailInvalid
+-- >>> {-# LANGUAGE DeriveDataTypeable #-}
 -- >>>
+-- >>> data UserError = NameEmpty | EmailInvalid
+-- >>>   deriving (Show, Data)
+-- >>>
+-- >>> instance Descriptive UserError where
+-- >>>   description NameEmpty    = "Name cannot be empty"
+-- >>>   description EmailInvalid = "Email format is invalid"
+-- >>>
+-- >>> instance HasErrorInfo UserError
+--
+-- Or implement 'HasErrorInfo' manually when you need custom codes or 'details':
+--
 -- >>> instance HasErrorInfo UserError where
 -- >>>   publicErrorInfo NameEmpty =
--- >>>     PublicErrorInfo
--- >>>       { publicMessage = "Name cannot be empty"
--- >>>       , code    = "USER_NAME_EMPTY"
--- >>>       , details = Nothing
--- >>>       }
+-- >>>     PublicErrorInfo "Name cannot be empty" "UserNameEmpty" Nothing
+-- >>>   publicErrorInfo EmailInvalid =
+-- >>>     PublicErrorInfo "Email format is invalid" "UserEmailInvalid" Nothing
 --
 -- Use in your railway:
 --
@@ -74,7 +84,8 @@
 -- * 'PublicErrorInfo' - Safe for end users: 'publicMessage', 'code', 'details'.
 --   Serialized to JSON in API responses; null fields are omitted.
 -- * 'InternalErrorInfo' - Sensitive diagnostics: 'internalMessage', 'severity',
---   'exception', 'requestInfo', 'component', 'callStack'.
+--   'exception', 'requestInfo', 'component', 'userId', 'entrypoint',
+--   'componentVersion', 'callStack'.
 --   Implements 'ToJSON' for structured log output but is never included in public
 --   API responses. Null fields are omitted.
 --
@@ -102,6 +113,7 @@ module Monad.Rail
     -- * Exception handling
     tryRail,
     tryRailWithCode,
+    tryRailWithError,
 
     -- * Operators
     (<!>),
@@ -109,9 +121,13 @@ module Monad.Rail
     -- * Error types
     ErrorSeverity (..),
     PublicErrorInfo (..),
+    Descriptive (..),
+    RequestContent (..),
+    RequestInfo (..),
     InternalErrorInfo (..),
     HasErrorInfo (..),
     SomeError (..),
+    UncaughtException (..),
     CaughtException (..),
   )
 where

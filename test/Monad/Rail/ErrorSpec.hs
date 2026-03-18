@@ -1,3 +1,4 @@
+{-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 module Monad.Rail.ErrorSpec (spec) where
@@ -5,6 +6,7 @@ module Monad.Rail.ErrorSpec (spec) where
 import qualified Control.Exception as Ex
 import Data.Aeson (Value (..), encode, object, toJSON, (.=))
 import qualified Data.ByteString.Lazy.Char8 as BSLC
+import Data.Data (Data)
 import Data.List (isInfixOf)
 import qualified Data.List.NonEmpty as NE
 import Data.Maybe (isNothing)
@@ -25,13 +27,13 @@ instance HasErrorInfo TestError where
   publicErrorInfo TestErrorA =
     PublicErrorInfo
       { publicMessage = "Error A occurred",
-        code = "TEST_ERROR_A",
+        code = "TestErrorA",
         details = Nothing
       }
   publicErrorInfo TestErrorB =
     PublicErrorInfo
       { publicMessage = "Error B occurred",
-        code = "TEST_ERROR_B",
+        code = "TestErrorB",
         details = Just (object ["key" .= ("value" :: Text)])
       }
   internalErrorInfo TestErrorA =
@@ -58,6 +60,16 @@ instance HasErrorInfo TestError where
         componentVersion = Nothing,
         callStack = Nothing
       }
+
+-- Simple error type using the Descriptive + Data default
+data SimpleError = NameEmpty | EmailInvalid
+  deriving (Show, Data)
+
+instance Descriptive SimpleError where
+  description NameEmpty   = "Name cannot be empty"
+  description EmailInvalid = "Email format is invalid"
+
+instance HasErrorInfo SimpleError
 
 mkSomeError :: TestError -> SomeError
 mkSomeError = SomeError
@@ -137,7 +149,7 @@ spec = do
     let pub =
           PublicErrorInfo
             { publicMessage = "Something went wrong",
-              code = "GENERIC_ERROR",
+              code = "GenericError",
               details = Nothing
             }
     let encoded = encode (toJSON pub)
@@ -309,31 +321,51 @@ spec = do
         encode (toJSON emptyRi {requestBody = Just (TextBody "data")})
           `shouldSatisfy` contains "\"body\""
 
+  describe "Descriptive" $ do
+    it "description returns the configured message for each constructor" $ do
+      description NameEmpty    `shouldBe` ("Name cannot be empty" :: Text)
+      description EmailInvalid `shouldBe` ("Email format is invalid" :: Text)
+    it "name defaults to the constructor name via Data" $ do
+      name NameEmpty    `shouldBe` ("NameEmpty" :: Text)
+      name EmailInvalid `shouldBe` ("EmailInvalid" :: Text)
+
+  describe "HasErrorInfo default publicErrorInfo" $ do
+    it "derives code from the constructor name" $
+      code (publicErrorInfo NameEmpty) `shouldBe` "NameEmpty"
+    it "derives code from each constructor independently" $
+      code (publicErrorInfo EmailInvalid) `shouldBe` "EmailInvalid"
+    it "uses description as publicMessage" $
+      publicMessage (publicErrorInfo NameEmpty) `shouldBe` "Name cannot be empty"
+    it "sets details to Nothing" $
+      details (publicErrorInfo NameEmpty) `shouldBe` Nothing
+    it "default internalErrorInfo has Error severity" $
+      severity (internalErrorInfo NameEmpty) `shouldBe` Error
+
   describe "CaughtException" $ do
     it "Show includes the exception message" $ do
-      let ce = CaughtException "CODE" (Ex.SomeException (userError "test msg")) Nothing
+      let ce = CaughtException "CODE" (Ex.SomeException (userError "test msg")) Nothing Nothing
       show ce `shouldSatisfy` ("test msg" `isInfixOf`)
 
     it "publicErrorInfo uses caughtCode as the error code" $ do
-      let ce = CaughtException "MY_CUSTOM_CODE" (Ex.SomeException (userError "oops")) Nothing
-      code (publicErrorInfo ce) `shouldBe` "MY_CUSTOM_CODE"
+      let ce = CaughtException "MyCustomCode" (Ex.SomeException (userError "oops")) Nothing Nothing
+      code (publicErrorInfo ce) `shouldBe` "MyCustomCode"
 
     it "publicErrorInfo message is always the generic safe message" $ do
-      let ce = CaughtException "ANY_CODE" (Ex.SomeException (userError "internal detail")) Nothing
+      let ce = CaughtException "ANY_CODE" (Ex.SomeException (userError "internal detail")) Nothing Nothing
       publicMessage (publicErrorInfo ce) `shouldBe` "An unexpected error occurred"
 
     it "internalErrorInfo has Critical severity" $ do
-      let ce = CaughtException "CODE" (Ex.SomeException (userError "oops")) Nothing
+      let ce = CaughtException "CODE" (Ex.SomeException (userError "oops")) Nothing Nothing
       severity (internalErrorInfo ce) `shouldBe` Critical
 
     it "internalErrorInfo.exception holds the original exception" $ do
       let originalEx = Ex.SomeException (userError "original")
-          ce = CaughtException "CODE" originalEx Nothing
+          ce = CaughtException "CODE" originalEx Nothing Nothing
       exception (internalErrorInfo ce)
         `shouldSatisfy` maybe False (("original" `isInfixOf`) . show)
 
     it "internalErrorInfo.callStack is Nothing when caughtCallStack is Nothing" $ do
-      let ce = CaughtException "CODE" (Ex.SomeException (userError "oops")) Nothing
+      let ce = CaughtException "CODE" (Ex.SomeException (userError "oops")) Nothing Nothing
       callStack (internalErrorInfo ce) `shouldSatisfy` isNothing
 
   describe "SomeError" $ do
@@ -342,7 +374,7 @@ spec = do
 
     it "publicErrorInfo extracts correct code" $ do
       let pub = publicErrorInfo (mkSomeError TestErrorA)
-      code pub `shouldBe` "TEST_ERROR_A"
+      code pub `shouldBe` "TestErrorA"
 
     it "publicErrorInfo extracts correct message" $ do
       let pub = publicErrorInfo (mkSomeError TestErrorA)
@@ -355,8 +387,8 @@ spec = do
     it "wraps different error types, each with their own info" $ do
       let pubA = publicErrorInfo (mkSomeError TestErrorA)
           pubB = publicErrorInfo (mkSomeError TestErrorB)
-      code pubA `shouldBe` "TEST_ERROR_A"
-      code pubB `shouldBe` "TEST_ERROR_B"
+      code pubA `shouldBe` "TestErrorA"
+      code pubB `shouldBe` "TestErrorB"
 
     describe "ToJSON" $ do
       it "serializes via publicErrorInfo" $
