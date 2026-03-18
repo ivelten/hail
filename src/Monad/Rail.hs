@@ -108,7 +108,8 @@ module Monad.Rail
 
     -- * Throwing Errors
     throwError,
-    throwCaughtException,
+    throwUnhandledException,
+    throwUnhandledExceptionWithCode,
 
     -- * Exception handling
     tryRail,
@@ -128,8 +129,7 @@ module Monad.Rail
     publicErrorInfo,
     internalErrorInfo,
     SomeError (..),
-    UncaughtException (..),
-    CaughtException (..),
+    UnhandledException (..),
   )
 where
 

@@ -327,36 +327,40 @@ spec = do
       componentVersion internal `shouldSatisfy` isNothing
       callStack internal       `shouldSatisfy` isNothing
 
-  describe "CaughtException" $ do
+  describe "UnhandledException" $ do
     it "Show includes the exception message" $ do
-      let ce = CaughtException "CODE" (Ex.SomeException (userError "test msg")) Nothing Nothing
-      show ce `shouldSatisfy` ("test msg" `isInfixOf`)
+      let ue = UnhandledException (Just "CODE") (Ex.SomeException (userError "test msg")) Nothing Nothing
+      show ue `shouldSatisfy` ("test msg" `isInfixOf`)
 
-    it "publicErrorInfo uses caughtCode as the error code" $ do
-      let ce = CaughtException "MyCustomCode" (Ex.SomeException (userError "oops")) Nothing Nothing
-      code (publicErrorInfo ce) `shouldBe` "MyCustomCode"
+    it "publicErrorInfo uses unhandledCode as the error code when Just" $ do
+      let ue = UnhandledException (Just "MyCustomCode") (Ex.SomeException (userError "oops")) Nothing Nothing
+      code (publicErrorInfo ue) `shouldBe` "MyCustomCode"
 
-    it "publicErrorInfo message is always the generic safe message" $ do
-      let ce = CaughtException "ANY_CODE" (Ex.SomeException (userError "internal detail")) Nothing Nothing
-      publicMessage (publicErrorInfo ce) `shouldBe` "An unexpected error occurred"
+    it "publicErrorInfo defaults to \"UnhandledException\" when unhandledCode is Nothing" $ do
+      let ue = UnhandledException Nothing (Ex.SomeException (userError "oops")) Nothing Nothing
+      code (publicErrorInfo ue) `shouldBe` "UnhandledException"
 
-    it "publicErrorInfo uses caughtMessage as public message when Just" $ do
-      let ce = CaughtException "CODE" (Ex.SomeException (userError "detail")) Nothing (Just "Custom public message")
-      publicMessage (publicErrorInfo ce) `shouldBe` "Custom public message"
+    it "publicErrorInfo message is always the generic safe message when unhandledMessage is Nothing" $ do
+      let ue = UnhandledException (Just "ANY_CODE") (Ex.SomeException (userError "internal detail")) Nothing Nothing
+      publicMessage (publicErrorInfo ue) `shouldBe` "An unexpected error occurred"
+
+    it "publicErrorInfo uses unhandledMessage as public message when Just" $ do
+      let ue = UnhandledException (Just "CODE") (Ex.SomeException (userError "detail")) Nothing (Just "Custom public message")
+      publicMessage (publicErrorInfo ue) `shouldBe` "Custom public message"
 
     it "internalErrorInfo has Critical severity" $ do
-      let ce = CaughtException "CODE" (Ex.SomeException (userError "oops")) Nothing Nothing
-      severity (internalErrorInfo ce) `shouldBe` Critical
+      let ue = UnhandledException (Just "CODE") (Ex.SomeException (userError "oops")) Nothing Nothing
+      severity (internalErrorInfo ue) `shouldBe` Critical
 
     it "internalErrorInfo.exception holds the original exception" $ do
       let originalEx = Ex.SomeException (userError "original")
-          ce = CaughtException "CODE" originalEx Nothing Nothing
-      exception (internalErrorInfo ce)
+          ue = UnhandledException (Just "CODE") originalEx Nothing Nothing
+      exception (internalErrorInfo ue)
         `shouldSatisfy` maybe False (("original" `isInfixOf`) . show)
 
-    it "internalErrorInfo.callStack is Nothing when caughtCallStack is Nothing" $ do
-      let ce = CaughtException "CODE" (Ex.SomeException (userError "oops")) Nothing Nothing
-      callStack (internalErrorInfo ce) `shouldSatisfy` isNothing
+    it "internalErrorInfo.callStack is Nothing when unhandledCallStack is Nothing" $ do
+      let ue = UnhandledException (Just "CODE") (Ex.SomeException (userError "oops")) Nothing Nothing
+      callStack (internalErrorInfo ue) `shouldSatisfy` isNothing
 
   describe "SomeError" $ do
     it "Show delegates to the wrapped error's Show instance" $

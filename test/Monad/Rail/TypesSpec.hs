@@ -203,7 +203,7 @@ spec = do
         Right _ -> expectationFailure "expected Left, got Right"
         Left _  -> pure ()
 
-    it "wraps the exception as a single UncaughtException error" $ do
+    it "wraps the exception as a single UnhandledException error" $ do
       let boom = Ex.throwIO (userError "oops")
       result <- runRail (tryRail boom :: Rail ())
       case result of
@@ -211,7 +211,7 @@ spec = do
         Left err -> do
           let errs = getErrors err
           length errs `shouldBe` 1
-          (code . publicErrorInfo . NE.head) errs `shouldBe` "UncaughtException"
+          (code . publicErrorInfo . NE.head) errs `shouldBe` "UnhandledException"
 
     it "the error has Critical severity" $ do
       let boom = Ex.throwIO (userError "oops")
@@ -312,25 +312,25 @@ spec = do
         Left err ->
           (code . publicErrorInfo . NE.head . getErrors) err `shouldBe` "CUSTOM_CODE"
 
-  describe "throwCaughtException" $ do
+  describe "throwUnhandledException" $ do
     it "returns Left with a single error" $ do
       let ex = Ex.SomeException (userError "oops")
-      result <- runRail (throwCaughtException "MY_CODE" ex :: Rail ())
+      result <- runRail (throwUnhandledException ex :: Rail ())
       case result of
         Right _ -> expectationFailure "expected Left, got Right"
         Left err -> length (getErrors err) `shouldBe` 1
 
-    it "uses the provided code in the error" $ do
+    it "uses the default code \"UnhandledException\"" $ do
       let ex = Ex.SomeException (userError "oops")
-      result <- runRail (throwCaughtException "MY_CODE" ex :: Rail ())
+      result <- runRail (throwUnhandledException ex :: Rail ())
       case result of
         Right _ -> expectationFailure "expected Left, got Right"
         Left err ->
-          (code . publicErrorInfo . NE.head . getErrors) err `shouldBe` "MY_CODE"
+          (code . publicErrorInfo . NE.head . getErrors) err `shouldBe` "UnhandledException"
 
     it "the error has Critical severity" $ do
       let ex = Ex.SomeException (userError "oops")
-      result <- runRail (throwCaughtException "MY_CODE" ex :: Rail ())
+      result <- runRail (throwUnhandledException ex :: Rail ())
       case result of
         Right _ -> expectationFailure "expected Left, got Right"
         Left err ->
@@ -338,7 +338,7 @@ spec = do
 
     it "preserves the original exception in the error" $ do
       let ex = Ex.SomeException (userError "original message")
-      result <- runRail (throwCaughtException "MY_CODE" ex :: Rail ())
+      result <- runRail (throwUnhandledException ex :: Rail ())
       case result of
         Right _ -> expectationFailure "expected Left, got Right"
         Left err ->
@@ -347,18 +347,69 @@ spec = do
 
     it "captures a call stack (callStack is Just)" $ do
       let ex = Ex.SomeException (userError "oops")
-      result <- runRail (throwCaughtException "MY_CODE" ex :: Rail ())
+      result <- runRail (throwUnhandledException ex :: Rail ())
       case result of
         Right _ -> expectationFailure "expected Left, got Right"
         Left err ->
           let internal = (internalErrorInfo . NE.head . getErrors) err
            in callStack internal `shouldSatisfy` isJust
 
-    it "short-circuits: code after throwCaughtException is not executed" $ do
+    it "short-circuits: code after throwUnhandledException is not executed" $ do
       ref <- newIORef (0 :: Int)
       let ex = Ex.SomeException (userError "fail")
       _ <- runRail $ do
-        _ <- throwCaughtException "MY_CODE" ex
+        _ <- throwUnhandledException ex
+        liftIO $ modifyIORef ref (+ 1)
+      val <- readIORef ref
+      val `shouldBe` 0
+
+  describe "throwUnhandledExceptionWithCode" $ do
+    it "returns Left with a single error" $ do
+      let ex = Ex.SomeException (userError "oops")
+      result <- runRail (throwUnhandledExceptionWithCode "MY_CODE" ex :: Rail ())
+      case result of
+        Right _ -> expectationFailure "expected Left, got Right"
+        Left err -> length (getErrors err) `shouldBe` 1
+
+    it "uses the provided code in the error" $ do
+      let ex = Ex.SomeException (userError "oops")
+      result <- runRail (throwUnhandledExceptionWithCode "MY_CODE" ex :: Rail ())
+      case result of
+        Right _ -> expectationFailure "expected Left, got Right"
+        Left err ->
+          (code . publicErrorInfo . NE.head . getErrors) err `shouldBe` "MY_CODE"
+
+    it "the error has Critical severity" $ do
+      let ex = Ex.SomeException (userError "oops")
+      result <- runRail (throwUnhandledExceptionWithCode "MY_CODE" ex :: Rail ())
+      case result of
+        Right _ -> expectationFailure "expected Left, got Right"
+        Left err ->
+          (severity . internalErrorInfo . NE.head . getErrors) err `shouldBe` Critical
+
+    it "preserves the original exception in the error" $ do
+      let ex = Ex.SomeException (userError "original message")
+      result <- runRail (throwUnhandledExceptionWithCode "MY_CODE" ex :: Rail ())
+      case result of
+        Right _ -> expectationFailure "expected Left, got Right"
+        Left err ->
+          let internal = (internalErrorInfo . NE.head . getErrors) err
+          in exception internal `shouldSatisfy` maybe False (("original message" `isInfixOf`) . show)
+
+    it "captures a call stack (callStack is Just)" $ do
+      let ex = Ex.SomeException (userError "oops")
+      result <- runRail (throwUnhandledExceptionWithCode "MY_CODE" ex :: Rail ())
+      case result of
+        Right _ -> expectationFailure "expected Left, got Right"
+        Left err ->
+          let internal = (internalErrorInfo . NE.head . getErrors) err
+           in callStack internal `shouldSatisfy` isJust
+
+    it "short-circuits: code after throwUnhandledExceptionWithCode is not executed" $ do
+      ref <- newIORef (0 :: Int)
+      let ex = Ex.SomeException (userError "fail")
+      _ <- runRail $ do
+        _ <- throwUnhandledExceptionWithCode "MY_CODE" ex
         liftIO $ modifyIORef ref (+ 1)
       val <- readIORef ref
       val `shouldBe` 0

@@ -141,7 +141,7 @@ Wraps any IO action that may throw exceptions and lifts it into the Railway:
 tryRail :: HasCallStack => IO a -> Rail a
 ```
 
-If the action throws, the exception is caught and converted to an `SomeError` wrapping a `CaughtException`. This lets you bring ordinary IO operations into a Railway pipeline without manual exception handling.
+If the action throws, the exception is caught and converted to a `SomeError` wrapping an `UnhandledException`. This lets you bring ordinary IO operations into a Railway pipeline without manual exception handling.
 
 ```haskell
 -- File operations
@@ -190,7 +190,7 @@ The resulting error for a caught exception will have:
 | Info | Field | Value |
 | --- | --- | --- |
 | `PublicErrorInfo` | `publicMessage` | `"An unexpected error occurred"` |
-| `PublicErrorInfo` | `code` | `"UncaughtException"` (customizable via `CaughtException`) |
+| `PublicErrorInfo` | `code` | `"UnhandledException"` (customizable via `tryRailWithCode` or `tryRailWithError`) |
 | `InternalErrorInfo` | `internalMessage` | The exception message (logs only) |
 | `InternalErrorInfo` | `severity` | `Critical` |
 | `InternalErrorInfo` | `exception` | The original `SomeException` |
@@ -227,22 +227,22 @@ safeQuery' = tryRailWithError (QueryFailed . T.pack . displayException) runQuery
 
 > **Note:** add `HasCallStack` to any wrapper's own signature so the call stack is captured at each call site rather than frozen at the wrapper's definition.
 
-### `CaughtException`
+### `UnhandledException`
 
 The error type produced by `tryRail`. It wraps `SomeException` and implements `HasErrorInfo`, so it works anywhere a Railway error is expected:
 
 ```haskell
-data CaughtException = CaughtException
-  { caughtCode      :: Text
-  , caughtException :: SomeException
-  , caughtCallStack :: Maybe CallStack
-  , caughtMessage   :: Maybe Text
+data UnhandledException = UnhandledException
+  { unhandledCode      :: Maybe Text
+  , unhandledException :: SomeException
+  , unhandledCallStack :: Maybe CallStack
+  , unhandledMessage   :: Maybe Text
   }
 ```
 
-When produced by `tryRail`, `caughtCode` defaults to `"UncaughtException"`, `caughtCallStack` is captured automatically at the call site, and `caughtMessage` defaults to `Nothing` (falling back to the generic public message `"An unexpected error occurred"`).
+When produced by `tryRail`, `unhandledCode` is `Nothing` (defaulting to `"UnhandledException"`), `unhandledCallStack` is captured automatically at the call site, and `unhandledMessage` defaults to `Nothing` (falling back to the generic public message `"An unexpected error occurred"`).
 
-Use it directly when you catch exceptions yourself and want a domain-specific code:
+Use `throwUnhandledException` when you catch exceptions yourself and the default code is sufficient:
 
 ```haskell
 import qualified Control.Exception as E
@@ -252,10 +252,10 @@ safeQuery = do
   result <- liftIO $ E.try runQuery
   case result of
     Right row -> pure row
-    Left ex   -> throwError (SomeError (CaughtException "DbQueryFailed" ex Nothing Nothing))
+    Left ex   -> throwUnhandledException ex
 ```
 
-Or use `throwCaughtException` for a more concise form — it also captures the call stack automatically:
+Use `throwUnhandledExceptionWithCode` when you need a domain-specific code — it also captures the call stack automatically:
 
 ```haskell
 safeQuery :: Rail Row
@@ -263,7 +263,7 @@ safeQuery = do
   result <- liftIO $ E.try runQuery
   case result of
     Right row -> pure row
-    Left ex   -> throwCaughtException "DbQueryFailed" ex
+    Left ex   -> throwUnhandledExceptionWithCode "DbQueryFailed" ex
 ```
 
 ### `runRail`
@@ -306,13 +306,13 @@ class HasErrorInfo e where
   errorDetails          :: e -> Maybe Value         -- Default: Nothing
   errorSeverity         :: e -> ErrorSeverity       -- Default: Error
   errorInternalMessage  :: e -> Maybe Text          -- Default: Nothing
-  errorException        :: e -> Maybe SomeException
-  errorRequestInfo      :: e -> Maybe RequestInfo
-  errorComponent        :: e -> Maybe Text
-  errorUserId           :: e -> Maybe Text
-  errorEntrypoint       :: e -> Maybe Text
-  errorComponentVersion :: e -> Maybe Text
-  errorCallStack        :: e -> Maybe CallStack
+  errorException        :: e -> Maybe SomeException -- Default: Nothing
+  errorRequestInfo      :: e -> Maybe RequestInfo   -- Default: Nothing
+  errorComponent        :: e -> Maybe Text          -- Default: Nothing
+  errorUserId           :: e -> Maybe Text          -- Default: Nothing
+  errorEntrypoint       :: e -> Maybe Text          -- Default: Nothing
+  errorComponentVersion :: e -> Maybe Text          -- Default: Nothing
+  errorCallStack        :: e -> Maybe CallStack     -- Default: Nothing
 ```
 
 Use `publicErrorInfo` and `internalErrorInfo` to assemble the corresponding records from any instance:

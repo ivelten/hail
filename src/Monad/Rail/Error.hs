@@ -70,8 +70,7 @@ module Monad.Rail.Error
     publicErrorInfo,
     internalErrorInfo,
     SomeError (..),
-    UncaughtException (..),
-    CaughtException (..),
+    UnhandledException (..),
     Failure (..),
   )
 where
@@ -445,20 +444,7 @@ internalErrorInfo e =
       callStack = errorCallStack e
     }
 
--- | Marker type for the default error code and message used by
--- 'Monad.Rail.Types.tryRail' when an IO action throws an uncaught exception.
---
--- Its 'HasErrorInfo' instance provides the generic public message shown to end users
--- and the default error code @\"UncaughtException\"@ derived from the constructor name.
--- Both are consumed by 'CaughtException'\'s 'HasErrorInfo' instance so the values
--- stay in one place.
-data UncaughtException = UncaughtException
-  deriving (Show, Data)
-
-instance HasErrorInfo UncaughtException where
-  errorPublicMessage _ = "An unexpected error occurred"
-
--- | Wrapper for caught exceptions that can be used as an error type.
+-- | Wrapper for unhandled exceptions that can be used as an error type.
 --
 -- This type captures a 'E.SomeException' thrown in 'IO' and makes it
 -- compatible with the Railway error system via its 'HasErrorInfo' instance.
@@ -469,8 +455,8 @@ instance HasErrorInfo UncaughtException where
 -- exception is stored in the 'exception' field of 'InternalErrorInfo' for logging
 -- and debugging.
 --
--- 'caughtCode' lets you assign a domain-specific error code when you catch
--- exceptions manually, rather than relying on the default @\"UncaughtException\"@:
+-- 'unhandledCode' lets you assign a domain-specific error code when you catch
+-- exceptions manually, rather than relying on the default @\"UnhandledException\"@:
 --
 -- >>> import qualified Control.Exception as E
 -- >>>
@@ -479,46 +465,46 @@ instance HasErrorInfo UncaughtException where
 -- >>>   result <- liftIO $ E.try runQuery
 -- >>>   case result of
 -- >>>     Right row -> pure row
--- >>>     Left ex   -> throwError (SomeError (CaughtException "DbQueryFailed" ex Nothing Nothing))
+-- >>>     Left ex   -> throwUnhandledExceptionWithCode "DbQueryFailed" ex
 --
--- Or use 'Monad.Rail.Types.throwCaughtException' for a more concise form that also captures the call stack automatically:
+-- Or use 'Monad.Rail.Types.throwUnhandledException' when the default code is sufficient:
 --
 -- >>> safeQuery :: Rail Row
 -- >>> safeQuery = do
 -- >>>   result <- liftIO $ E.try runQuery
 -- >>>   case result of
 -- >>>     Right row -> pure row
--- >>>     Left ex   -> throwCaughtException "DbQueryFailed" ex
+-- >>>     Left ex   -> throwUnhandledException ex
 --
--- When using 'Monad.Rail.Types.tryRail', the code defaults to @\"UncaughtException\"@ and the
+-- When using 'Monad.Rail.Types.tryRail', the code defaults to @\"UnhandledException\"@ and the
 -- call stack is captured automatically at the call site.
-data CaughtException = CaughtException
-  { -- | Machine-readable error code exposed in 'PublicErrorInfo'.
-    -- Defaults to @\"UncaughtException\"@ when produced by 'Monad.Rail.Types.tryRail'.
-    caughtCode :: Text,
+data UnhandledException = UnhandledException
+  { -- | Optional machine-readable error code exposed in 'PublicErrorInfo'.
+    -- When 'Nothing', defaults to @\"UnhandledException\"@.
+    -- Set via 'Monad.Rail.Types.throwUnhandledExceptionWithCode' or 'Monad.Rail.Types.tryRailWithCode'.
+    unhandledCode :: Maybe Text,
     -- | The original exception.
-    caughtException :: E.SomeException,
+    unhandledException :: E.SomeException,
     -- | Optional Haskell call stack at the catch site.
     -- Populated automatically by 'Monad.Rail.Types.tryRail' via 'GHC.Stack.HasCallStack'.
-    caughtCallStack :: Maybe CallStack,
+    unhandledCallStack :: Maybe CallStack,
     -- | Optional public message override.
     --
-    -- When 'Nothing', falls back to @'errorPublicMessage' 'UncaughtException'@
-    -- (@\"An unexpected error occurred\"@). Set this via
+    -- When 'Nothing', falls back to @\"An unexpected error occurred\"@. Set this via
     -- 'Monad.Rail.Types.tryRailWithError' to surface a domain-specific message.
-    caughtMessage :: Maybe Text
+    unhandledMessage :: Maybe Text
   }
 
-instance Show CaughtException where
-  show ce = "Caught exception: " <> E.displayException (caughtException ce)
+instance Show UnhandledException where
+  show ue = "Unhandled exception: " <> E.displayException (unhandledException ue)
 
-instance HasErrorInfo CaughtException where
-  errorPublicMessage ce = fromMaybe (errorPublicMessage UncaughtException) (caughtMessage ce)
-  errorCode ce = caughtCode ce
+instance HasErrorInfo UnhandledException where
+  errorPublicMessage ue = fromMaybe "An unexpected error occurred" (unhandledMessage ue)
+  errorCode ue = fromMaybe "UnhandledException" (unhandledCode ue)
   errorSeverity _ = Critical
-  errorInternalMessage ce = Just (T.pack (E.displayException (caughtException ce)))
-  errorException ce = Just (caughtException ce)
-  errorCallStack ce = caughtCallStack ce
+  errorInternalMessage ue = Just (T.pack (E.displayException (unhandledException ue)))
+  errorException ue = Just (unhandledException ue)
+  errorCallStack ue = unhandledCallStack ue
 
 -- | A wrapper type that can hold any application error implementing 'HasErrorInfo'.
 --

@@ -76,7 +76,8 @@ module Monad.Rail.Types
     runRailT,
     runRail,
     throwError,
-    throwCaughtException,
+    throwUnhandledException,
+    throwUnhandledExceptionWithCode,
     tryRail,
     tryRailWithCode,
     tryRailWithError,
@@ -91,7 +92,7 @@ import Control.Monad.IO.Class (MonadIO, liftIO)
 import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.Text as T
 import GHC.Stack (HasCallStack, callStack)
-import Monad.Rail.Error (CaughtException (..), Failure (..), HasErrorInfo (..), SomeError (..), UncaughtException (..))
+import Monad.Rail.Error (Failure (..), HasErrorInfo (..), SomeError (..), UnhandledException (..))
 
 -- | The Railway-Oriented monad transformer.
 --
@@ -219,15 +220,17 @@ runRail = runExceptT . unRailT
 throwError :: (Monad m) => SomeError -> RailT Failure m a
 throwError err = RailT $ E.throwError $ Failure (err :| [])
 
--- | Throw a caught IO exception as a Railway error with a domain-specific code.
+-- | Throw an unhandled IO exception as a Railway error using the default code @\"UnhandledException\"@.
 --
 -- This is a convenience wrapper around 'throwError' for the common pattern of
--- catching an IO exception and re-throwing it as a 'CaughtException'. It
+-- catching an IO exception and re-throwing it as an 'UnhandledException'. It
 -- captures the call stack automatically, so you do not need to pass it manually.
 --
--- The call stack is captured at the __call site__ of 'throwCaughtException', not at the
+-- The call stack is captured at the __call site__ of 'throwUnhandledException', not at the
 -- definition of any wrapper around it (provided the wrapper also carries
 -- 'GHC.Stack.HasCallStack').
+--
+-- Use 'throwUnhandledExceptionWithCode' when you need a domain-specific error code.
 --
 -- == Example
 --
@@ -238,25 +241,50 @@ throwError err = RailT $ E.throwError $ Failure (err :| [])
 -- >>>   result <- liftIO $ E.try runQuery
 -- >>>   case result of
 -- >>>     Right row -> pure row
--- >>>     Left ex   -> throwCaughtException "DbQueryFailed" ex
-throwCaughtException :: (HasCallStack, Monad m) => T.Text -> Ex.SomeException -> RailT Failure m a
-throwCaughtException errCode ex = throwError (SomeError caught)
+-- >>>     Left ex   -> throwUnhandledException ex
+throwUnhandledException :: (HasCallStack, Monad m) => Ex.SomeException -> RailT Failure m a
+throwUnhandledException ex = throwError (SomeError ue)
   where
-    caught =
-      CaughtException
-        { caughtCode = errCode,
-          caughtException = ex,
-          caughtCallStack = Just callStack,
-          caughtMessage = Nothing
+    ue =
+      UnhandledException
+        { unhandledCode = Nothing,
+          unhandledException = ex,
+          unhandledCallStack = Just callStack,
+          unhandledMessage = Nothing
+        }
+
+-- | Like 'throwUnhandledException', but with a domain-specific error code.
+--
+-- The call stack is captured at the __call site__, provided the wrapper also carries
+-- 'GHC.Stack.HasCallStack'.
+--
+-- == Example
+--
+-- >>> import qualified Control.Exception as E
+-- >>>
+-- >>> safeQuery :: Rail Row
+-- >>> safeQuery = do
+-- >>>   result <- liftIO $ E.try runQuery
+-- >>>   case result of
+-- >>>     Right row -> pure row
+-- >>>     Left ex   -> throwUnhandledExceptionWithCode "DbQueryFailed" ex
+throwUnhandledExceptionWithCode :: (HasCallStack, Monad m) => T.Text -> Ex.SomeException -> RailT Failure m a
+throwUnhandledExceptionWithCode errCode ex = throwError (SomeError ue)
+  where
+    ue =
+      UnhandledException
+        { unhandledCode = Just errCode,
+          unhandledException = ex,
+          unhandledCallStack = Just callStack,
+          unhandledMessage = Nothing
         }
 
 -- | Safely execute an IO action that may throw exceptions,
 -- converting any exception into a Railway error.
 --
 -- This is a convenience wrapper around 'tryRailWithCode' that uses the default
--- error code @\"UncaughtException\"@ (derived from 'UncaughtException' via
--- 'HasErrorInfo'). Use 'tryRailWithCode' for a custom code with the same generic
--- message, or 'tryRailWithError' to also customise the public message.
+-- error code @\"UnhandledException\"@. Use 'tryRailWithCode' for a custom code with the same
+-- generic message, or 'tryRailWithError' to also customise the public message.
 --
 -- == Example
 --
@@ -269,7 +297,19 @@ throwCaughtException errCode ex = throwError (SomeError caught)
 -- >>>   validateName content <!> validateEmail content
 -- >>>   saveToDb content
 tryRail :: (HasCallStack) => IO a -> Rail a
-tryRail = tryRailWithCode (const (errorCode UncaughtException))
+tryRail action = do
+  result <- liftIO $ Ex.try action
+  case result of
+    Right value -> pure value
+    Left ex -> throwError (SomeError ue)
+      where
+        ue =
+          UnhandledException
+            { unhandledCode = Nothing,
+              unhandledException = ex,
+              unhandledCallStack = Just callStack,
+              unhandledMessage = Nothing
+            }
 
 -- | Like 'tryRail', but with a custom error code derived from the exception.
 --
@@ -299,14 +339,14 @@ tryRailWithCode mkCode action = do
   result <- liftIO $ Ex.try action
   case result of
     Right value -> pure value
-    Left ex -> throwError (SomeError caught)
+    Left ex -> throwError (SomeError ue)
       where
-        caught =
-          CaughtException
-            { caughtCode = mkCode ex,
-              caughtException = ex,
-              caughtCallStack = Just callStack,
-              caughtMessage = Nothing
+        ue =
+          UnhandledException
+            { unhandledCode = Just (mkCode ex),
+              unhandledException = ex,
+              unhandledCallStack = Just callStack,
+              unhandledMessage = Nothing
             }
 
 -- | Like 'tryRailWithCode', but derives the error code and public message from
@@ -342,15 +382,15 @@ tryRailWithError mkErr action = do
   result <- liftIO $ Ex.try action
   case result of
     Right value -> pure value
-    Left ex -> throwError (SomeError caught)
+    Left ex -> throwError (SomeError ue)
       where
         err = mkErr ex
-        caught =
-          CaughtException
-            { caughtCode = errorCode err,
-              caughtException = ex,
-              caughtCallStack = Just callStack,
-              caughtMessage = Just (errorPublicMessage err)
+        ue =
+          UnhandledException
+            { unhandledCode = Just (errorCode err),
+              unhandledException = ex,
+              unhandledCallStack = Just callStack,
+              unhandledMessage = Just (errorPublicMessage err)
             }
 
 -- | Accumulates errors from two Railway validations.
