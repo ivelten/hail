@@ -108,7 +108,7 @@ module Monad.Rail
 
     -- * Throwing Errors
     throwError,
-    throwCaughtEx,
+    throwCaughtException,
 
     -- * Exception handling
     tryRail,

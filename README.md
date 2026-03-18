@@ -255,7 +255,7 @@ safeQuery = do
     Left ex   -> throwError (SomeError (CaughtException "DbQueryFailed" ex Nothing Nothing))
 ```
 
-Or use `throwCaughtEx` for a more concise form — it also captures the call stack automatically:
+Or use `throwCaughtException` for a more concise form — it also captures the call stack automatically:
 
 ```haskell
 safeQuery :: Rail Row
@@ -263,7 +263,7 @@ safeQuery = do
   result <- liftIO $ E.try runQuery
   case result of
     Right row -> pure row
-    Left ex   -> throwCaughtEx "DbQueryFailed" ex
+    Left ex   -> throwCaughtException "DbQueryFailed" ex
 ```
 
 ### `runRail`

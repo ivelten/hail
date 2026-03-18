@@ -481,14 +481,14 @@ instance HasErrorInfo UncaughtException where
 -- >>>     Right row -> pure row
 -- >>>     Left ex   -> throwError (SomeError (CaughtException "DbQueryFailed" ex Nothing Nothing))
 --
--- Or use 'Monad.Rail.Types.throwCaughtEx' for a more concise form that also captures the call stack automatically:
+-- Or use 'Monad.Rail.Types.throwCaughtException' for a more concise form that also captures the call stack automatically:
 --
 -- >>> safeQuery :: Rail Row
 -- >>> safeQuery = do
 -- >>>   result <- liftIO $ E.try runQuery
 -- >>>   case result of
 -- >>>     Right row -> pure row
--- >>>     Left ex   -> throwCaughtEx "DbQueryFailed" ex
+-- >>>     Left ex   -> throwCaughtException "DbQueryFailed" ex
 --
 -- When using 'Monad.Rail.Types.tryRail', the code defaults to @\"UncaughtException\"@ and the
 -- call stack is captured automatically at the call site.

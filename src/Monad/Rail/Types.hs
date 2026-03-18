@@ -76,7 +76,7 @@ module Monad.Rail.Types
     runRailT,
     runRail,
     throwError,
-    throwCaughtEx,
+    throwCaughtException,
     tryRail,
     tryRailWithCode,
     tryRailWithError,
@@ -225,7 +225,7 @@ throwError err = RailT $ E.throwError $ Failure (err :| [])
 -- catching an IO exception and re-throwing it as a 'CaughtException'. It
 -- captures the call stack automatically, so you do not need to pass it manually.
 --
--- The call stack is captured at the __call site__ of 'throwCaughtEx', not at the
+-- The call stack is captured at the __call site__ of 'throwCaughtException', not at the
 -- definition of any wrapper around it (provided the wrapper also carries
 -- 'GHC.Stack.HasCallStack').
 --
@@ -238,9 +238,9 @@ throwError err = RailT $ E.throwError $ Failure (err :| [])
 -- >>>   result <- liftIO $ E.try runQuery
 -- >>>   case result of
 -- >>>     Right row -> pure row
--- >>>     Left ex   -> throwCaughtEx "DbQueryFailed" ex
-throwCaughtEx :: (HasCallStack, Monad m) => T.Text -> Ex.SomeException -> RailT Failure m a
-throwCaughtEx errCode ex = throwError (SomeError caught)
+-- >>>     Left ex   -> throwCaughtException "DbQueryFailed" ex
+throwCaughtException :: (HasCallStack, Monad m) => T.Text -> Ex.SomeException -> RailT Failure m a
+throwCaughtException errCode ex = throwError (SomeError caught)
   where
     caught =
       CaughtException
