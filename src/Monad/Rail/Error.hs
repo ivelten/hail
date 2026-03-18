@@ -251,7 +251,7 @@ class HasErrorInfo e where
 --
 -- This type captures a 'E.SomeException' thrown in 'IO' and makes it
 -- compatible with the Railway error system via its 'HasErrorInfo' instance.
--- It is the error type produced by 'tryRail' when an IO action throws.
+-- It is the error type produced by 'Monad.Rail.Types.tryRail' when an IO action throws.
 --
 -- The 'publicMessage' of the 'PublicErrorInfo' is intentionally generic so that internal
 -- details are never accidentally exposed to end users. The original exception is
@@ -269,7 +269,7 @@ class HasErrorInfo e where
 -- >>>     Right row -> pure row
 -- >>>     Left ex   -> throwError (SomeError (CaughtException "DB_QUERY_FAILED" ex Nothing))
 --
--- Or use 'throwCaughtEx' for a more concise form that also captures the call stack automatically:
+-- Or use 'Monad.Rail.Types.throwCaughtEx' for a more concise form that also captures the call stack automatically:
 --
 -- >>> safeQuery :: Rail Row
 -- >>> safeQuery = do
@@ -278,16 +278,16 @@ class HasErrorInfo e where
 -- >>>     Right row -> pure row
 -- >>>     Left ex   -> throwCaughtEx "DB_QUERY_FAILED" ex
 --
--- When using 'tryRail', the code defaults to @\"UNCAUGHT_EXCEPTION\"@ and the
+-- When using 'Monad.Rail.Types.tryRail', the code defaults to @\"UNCAUGHT_EXCEPTION\"@ and the
 -- 'callStack' is captured automatically at the call site.
 data CaughtException = CaughtException
   { -- | Machine-readable error code exposed in 'PublicErrorInfo'.
-    -- Defaults to @\"UNCAUGHT_EXCEPTION\"@ when produced by 'tryRail'.
+    -- Defaults to @\"UNCAUGHT_EXCEPTION\"@ when produced by 'Monad.Rail.Types.tryRail'.
     caughtCode :: Text,
     -- | The original exception.
     caughtEx :: E.SomeException,
     -- | Optional Haskell call stack at the catch site.
-    -- Populated automatically by 'tryRail' via 'HasCallStack'.
+    -- Populated automatically by 'Monad.Rail.Types.tryRail' via 'GHC.Stack.HasCallStack'.
     caughtCallStack :: Maybe CallStack
   }
 
@@ -357,11 +357,11 @@ instance HasErrorInfo SomeError where
 
 -- | Represents a collection of one or more application errors accumulated during a Railway computation.
 --
--- This type is used as the error type in 'RailT' computations. It guarantees that
+-- This type is used as the error type in 'Monad.Rail.Types.RailT' computations. It guarantees that
 -- at least one error is always present (using 'NonEmpty'), which is essential for
 -- the Railway-Oriented programming model where a failure state must contain error information.
 --
--- Multiple errors are accumulated when using the '<!>' operator for validations,
+-- Multiple errors are accumulated when using the 'Monad.Rail.Types.<!>' operator for validations,
 -- allowing you to collect all validation errors before reporting failure.
 --
 -- == Combining Errors

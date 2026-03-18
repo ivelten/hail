@@ -226,7 +226,7 @@ throwError err = RailT $ E.throwError $ Failure (err :| [])
 --
 -- The call stack is captured at the __call site__ of 'throwCaughtEx', not at the
 -- definition of any wrapper around it (provided the wrapper also carries
--- 'HasCallStack').
+-- 'GHC.Stack.HasCallStack').
 --
 -- == Example
 --
@@ -283,7 +283,7 @@ tryRail = tryRailWithCode (T.pack "UNCAUGHT_EXCEPTION")
 -- >>> tryHttp :: HasCallStack => IO a -> Rail a
 -- >>> tryHttp = tryRailWithCode "HTTP_ERROR"
 --
--- Note: if you partially apply this function, add 'HasCallStack' to the
+-- Note: if you partially apply this function, add 'GHC.Stack.HasCallStack' to the
 -- wrapper's own signature so the call stack is captured at each call site
 -- rather than frozen at the definition of the wrapper.
 tryRailWithCode :: (HasCallStack) => T.Text -> IO a -> Rail a
