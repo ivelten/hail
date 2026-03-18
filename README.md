@@ -20,7 +20,7 @@ build-depends:
 
 ### 1. Define your error type
 
-For simple enum-style errors, derive `Data` and implement `Descriptive`. The error code is derived automatically from the constructor name:
+Implement `HasErrorInfo` with `errorMessage` — the only required method. Derive `Data` to get an automatic error code from the constructor name:
 
 ```haskell
 {-# LANGUAGE DeriveDataTypeable #-}
@@ -33,18 +33,16 @@ data UserError
   | AgeTooLow
   deriving (Show, Data)
 
-instance Descriptive UserError where
-  description NameEmpty   = "Name cannot be empty"
-  description EmailInvalid = "Invalid email format"
-  description AgeTooLow   = "Must be at least 18 years old"
-
-instance HasErrorInfo UserError
+instance HasErrorInfo UserError where
+  errorMessage NameEmpty    = "Name cannot be empty"
+  errorMessage EmailInvalid = "Invalid email format"
+  errorMessage AgeTooLow    = "Must be at least 18 years old"
 -- NameEmpty    → { message: "Name cannot be empty",           code: "NameEmpty" }
 -- EmailInvalid → { message: "Invalid email format",           code: "EmailInvalid" }
 -- AgeTooLow    → { message: "Must be at least 18 years old",  code: "AgeTooLow" }
 ```
 
-When you need custom codes or `details`, implement `publicErrorInfo` manually instead — see [`HasErrorInfo`](#haserrorinfo) for the full pattern.
+When you need custom codes or extra per-constructor behaviour, override individual methods — see [`HasErrorInfo`](#haserrorinfo) for the full pattern.
 
 ### 2. Write your validations
 
@@ -197,13 +195,13 @@ The resulting error for a caught exception will have:
 
 ### `tryRailWithError`
 
-Like `tryRailWithCode`, but derives the error code and public message from a `Descriptive` value built from the caught exception:
+Like `tryRailWithCode`, but derives the error code and public message from a `HasErrorInfo` value built from the caught exception:
 
 ```haskell
-tryRailWithError :: (HasCallStack, Descriptive e) => (SomeException -> e) -> IO a -> Rail a
+tryRailWithError :: (HasCallStack, HasErrorInfo e) => (SomeException -> e) -> IO a -> Rail a
 ```
 
-The error-building function receives the `SomeException` that was thrown, allowing the resulting error to carry information extracted from the exception itself. `name` is used as the error code and `description` as the public message.
+The error-building function receives the `SomeException` that was thrown, allowing the resulting error to carry information extracted from the exception itself. `errorCode` is used as the error code and `errorMessage` as the public message.
 
 ```haskell
 {-# LANGUAGE DeriveDataTypeable #-}
@@ -211,9 +209,9 @@ The error-building function receives the `SomeException` that was thrown, allowi
 data DbError = QueryFailed Text | ConnectionLost
   deriving (Show, Data)
 
-instance Descriptive DbError where
-  description (QueryFailed _) = "A database query failed"
-  description ConnectionLost  = "Lost connection to the database"
+instance HasErrorInfo DbError where
+  errorMessage (QueryFailed _) = "A database query failed"
+  errorMessage ConnectionLost  = "Lost connection to the database"
 
 -- Always map to ConnectionLost, ignoring the exception:
 safeQuery :: Rail [Row]
@@ -294,32 +292,36 @@ runAppRail :: AppState -> AppRail a -> IO (Either Failure a, AppState)
 runAppRail initialState = runStateT . runRailT
 ```
 
-### `Descriptive`
-
-Typeclass that supplies the `publicMessage` for the `publicErrorInfo` default:
-
-```haskell
-class Descriptive a where
-  description :: a -> Text
-```
-
-Implement it alongside a no-body `HasErrorInfo` instance for simple error types. Not needed when implementing `publicErrorInfo` manually.
-
 ### `HasErrorInfo`
 
-Typeclass connecting your domain error types to the standard error format:
+Typeclass connecting your domain error types to the standard error format. Only `errorMessage` is required — all other methods have sensible defaults:
 
 ```haskell
 class HasErrorInfo e where
-  publicErrorInfo   :: e -> PublicErrorInfo   -- has a default (see below)
-  internalErrorInfo :: e -> InternalErrorInfo -- has a default
+  errorMessage          :: e -> Text                -- Required
+  errorCode             :: e -> Text                -- Default: constructor name via Data
+  errorDetails          :: e -> Maybe Value         -- Default: Nothing
+  errorSeverity         :: e -> ErrorSeverity       -- Default: Error
+  errorInternalMessage  :: e -> Maybe Text          -- Default: Nothing
+  errorException        :: e -> Maybe SomeException
+  errorRequestInfo      :: e -> Maybe RequestInfo
+  errorComponent        :: e -> Maybe Text
+  errorUserId           :: e -> Maybe Text
+  errorEntrypoint       :: e -> Maybe Text
+  errorComponentVersion :: e -> Maybe Text
+  errorCallStack        :: e -> Maybe CallStack
 ```
 
-There are two ways to use it:
+Use `publicErrorInfo` and `internalErrorInfo` to assemble the corresponding records from any instance:
 
-#### Simple errors — `Descriptive` + `Data`
+```haskell
+publicErrorInfo  :: HasErrorInfo e => e -> PublicErrorInfo
+internalErrorInfo :: HasErrorInfo e => e -> InternalErrorInfo
+```
 
-Derive `Data` and implement `Descriptive`. The `publicErrorInfo` default derives `code` from the constructor name via `Data.toConstr` and `publicMessage` from `description`:
+#### Simple errors — implement `errorMessage` only
+
+Derive `Data` and implement `errorMessage`. The `errorCode` default derives the error code from the constructor name via `Data.toConstr`:
 
 ```haskell
 {-# LANGUAGE DeriveDataTypeable #-}
@@ -327,64 +329,61 @@ Derive `Data` and implement `Descriptive`. The `publicErrorInfo` default derives
 data OrderError = ItemOutOfStock | PaymentDeclined
   deriving (Show, Data)
 
-instance Descriptive OrderError where
-  description ItemOutOfStock   = "One or more items are out of stock"
-  description PaymentDeclined  = "Payment was declined"
-
-instance HasErrorInfo OrderError  -- code = "ItemOutOfStock" or "PaymentDeclined"
+instance HasErrorInfo OrderError where
+  errorMessage ItemOutOfStock  = "One or more items are out of stock"
+  errorMessage PaymentDeclined = "Payment was declined"
+-- errorCode = "ItemOutOfStock" or "PaymentDeclined"
 ```
 
 > **Note:** the error code is the constructor name verbatim. Renaming a constructor silently changes its code, so treat constructor names as part of your public API contract.
 
-You can still override `internalErrorInfo` while keeping the default `publicErrorInfo`:
+#### Full control — override individual methods
+
+Override any combination of methods when you need custom codes, `errorDetails`, severity, or internal context. Methods you do not override keep their defaults:
 
 ```haskell
 instance HasErrorInfo OrderError where
-  internalErrorInfo PaymentDeclined =
-    (internalErrorInfo PaymentDeclined) { severity = Critical }
+  errorMessage ItemOutOfStock  = "One or more items are out of stock"
+  errorMessage PaymentDeclined = "Payment was declined"
+
+  -- Custom codes
+  errorCode ItemOutOfStock  = "OrderItemOutOfStock"
+  errorCode PaymentDeclined = "OrderPaymentDeclined"
+
+  -- Override severity for one constructor only
+  errorSeverity PaymentDeclined = Critical
+
+  -- Override internal message for one constructor
+  errorInternalMessage PaymentDeclined = Just "Stripe returned decline code: insufficient_funds"
 ```
-
-#### Full control — implement `publicErrorInfo` manually
-
-Use this when you need custom codes, `details`, or constructor-specific logic:
-
-```haskell
-instance HasErrorInfo OrderError where
-  publicErrorInfo ItemOutOfStock =
-    PublicErrorInfo "One or more items are out of stock" "ItemOutOfStock" Nothing
-  publicErrorInfo PaymentDeclined =
-    PublicErrorInfo "Payment was declined" "PaymentDeclined" Nothing
-```
-
-`internalErrorInfo` defaults to `Error` severity with all optional fields set to `Nothing` in both cases. Override it when your error carries sensitive diagnostic context for logging.
 
 ### `PublicErrorInfo` and `InternalErrorInfo`
 
-Error data is split into two records by visibility:
+Error data is split into two records by visibility. Use the `publicErrorInfo` and `internalErrorInfo` functions to obtain them from any `HasErrorInfo` instance.
 
 **`PublicErrorInfo`** — serialized to JSON, safe to return to callers:
 
-| Field | Purpose |
-| --- | --- |
-| `publicMessage` | Human-readable message safe to show end users |
-| `code` | Machine-readable identifier |
-| `details` | Extra JSON context (resource ID, etc.) |
+| JSON key | Field | `HasErrorInfo` method |
+| --- | --- | --- |
+| `message` | `publicMessage` | `errorMessage` |
+| `code` | `code` | `errorCode` |
+| `details` | `details` | `errorDetails` |
 
 **`InternalErrorInfo`** — for logging and monitoring only. It implements `ToJSON` so you can log it server-side, but `SomeError`'s `ToJSON` instance only serializes `PublicErrorInfo`, so internal fields are never included in API responses:
 
-| Field | Purpose |
-| --- | --- |
-| `severity` | `Error` or `Critical`, for monitoring |
-| `internalMessage` | Sensitive details for logs (stack traces, DB info) |
-| `exception` | Underlying exception, for debugging only |
-| `requestInfo` | Structured `RequestInfo` with request ID, headers, and body |
-| `component` | Subsystem label (`"auth"`, `"payment"`) for log filtering |
-| `userId` | Identifier of the user making the request |
-| `entrypoint` | API endpoint or handler that was called (e.g. `"POST /api/v1/users"`) |
-| `componentVersion` | Version of the component running when the error occurred |
-| `callStack` | Haskell call chain at the throw site (requires `HasCallStack`) |
+| JSON key | Field | `HasErrorInfo` method |
+| --- | --- | --- |
+| `severity` | `severity` | `errorSeverity` |
+| `message` | `internalMessage` | `errorInternalMessage` |
+| `exception` | `exception` | `errorException` |
+| `requestInfo` | `requestInfo` | `errorRequestInfo` |
+| `component` | `component` | `errorComponent` |
+| `userId` | `userId` | `errorUserId` |
+| `entrypoint` | `entrypoint` | `errorEntrypoint` |
+| `componentVersion` | `componentVersion` | `errorComponentVersion` |
+| `callStack` | `callStack` | `errorCallStack` |
 
-**`RequestInfo`** — structured context about the HTTP request that triggered the error, attached via `requestInfo`:
+**`RequestInfo`** — structured context about the HTTP request that triggered the error, attached via `errorRequestInfo`:
 
 | Field | Purpose |
 | --- | --- |
@@ -412,20 +411,13 @@ Use `Critical` for errors that need immediate attention (e.g., data corruption, 
 `SomeError` is an existential wrapper, so you can mix error types freely:
 
 ```haskell
-data DbError = ConnectionFailed deriving (Show)
+data DbError = ConnectionFailed deriving (Show, Data)
 
 instance HasErrorInfo DbError where
-  publicErrorInfo ConnectionFailed =
-    PublicErrorInfo
-      { publicMessage = "Service temporarily unavailable"
-      , code          = "DbConnectionFailed"
-      , details = Nothing
-      }
-  internalErrorInfo ConnectionFailed =
-    (internalErrorInfo ConnectionFailed)
-      { internalMessage = Just "Postgres replica at 10.0.0.5:5432 unreachable"
-      , severity        = Critical
-      }
+  errorMessage         ConnectionFailed = "Service temporarily unavailable"
+  errorCode            ConnectionFailed = "DbConnectionFailed"
+  errorSeverity        ConnectionFailed = Critical
+  errorInternalMessage ConnectionFailed = Just "Postgres replica at 10.0.0.5:5432 unreachable"
 
 pipeline :: Rail ()
 pipeline = do

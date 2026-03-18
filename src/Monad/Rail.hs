@@ -21,27 +21,26 @@
 --
 -- == Quick Start
 --
--- Define your error type using 'Descriptive' and 'Data.Data.Data' for simple
--- enum-style errors. The error code is derived automatically from the constructor name:
+-- Implement 'HasErrorInfo' with 'errorMessage' — the only required method.
+-- Derive 'Data.Data.Data' to get an automatic error code from the constructor name:
 --
 -- >>> {-# LANGUAGE DeriveDataTypeable #-}
 -- >>>
 -- >>> data UserError = NameEmpty | EmailInvalid
 -- >>>   deriving (Show, Data)
 -- >>>
--- >>> instance Descriptive UserError where
--- >>>   description NameEmpty    = "Name cannot be empty"
--- >>>   description EmailInvalid = "Email format is invalid"
--- >>>
--- >>> instance HasErrorInfo UserError
+-- >>> instance HasErrorInfo UserError where
+-- >>>   errorMessage NameEmpty    = "Name cannot be empty"
+-- >>>   errorMessage EmailInvalid = "Email format is invalid"
 --
--- Or implement 'HasErrorInfo' manually when you need custom codes or 'details':
+-- Override individual methods when you need custom codes or 'errorDetails':
 --
 -- >>> instance HasErrorInfo UserError where
--- >>>   publicErrorInfo NameEmpty =
--- >>>     PublicErrorInfo "Name cannot be empty" "UserNameEmpty" Nothing
--- >>>   publicErrorInfo EmailInvalid =
--- >>>     PublicErrorInfo "Email format is invalid" "UserEmailInvalid" Nothing
+-- >>>   errorMessage NameEmpty    = "Name cannot be empty"
+-- >>>   errorMessage EmailInvalid = "Email format is invalid"
+-- >>>
+-- >>>   errorCode NameEmpty    = "UserNameEmpty"
+-- >>>   errorCode EmailInvalid = "UserEmailInvalid"
 --
 -- Use in your railway:
 --
@@ -81,13 +80,14 @@
 --
 -- Each error carries two separate records:
 --
--- * 'PublicErrorInfo' - Safe for end users: 'publicMessage', 'code', 'details'.
---   Serialized to JSON in API responses; null fields are omitted.
--- * 'InternalErrorInfo' - Sensitive diagnostics: 'internalMessage', 'severity',
---   'exception', 'requestInfo', 'component', 'userId', 'entrypoint',
---   'componentVersion', 'callStack'.
---   Implements 'ToJSON' for structured log output but is never included in public
---   API responses. Null fields are omitted.
+-- * 'PublicErrorInfo' - Safe for end users: message, code, and details.
+--   Assembled via 'publicErrorInfo'; serialized to JSON in API responses.
+--   Null fields are omitted.
+-- * 'InternalErrorInfo' - Sensitive diagnostics: severity, internal message,
+--   exception, request info, component, user ID, entrypoint, component version,
+--   and call stack. Assembled via 'internalErrorInfo'; implements 'ToJSON' for
+--   structured log output but is never included in public API responses.
+--   Null fields are omitted.
 --
 -- The 'Failure' type implements 'ToJSON', so errors serialize automatically:
 --
@@ -121,11 +121,12 @@ module Monad.Rail
     -- * Error types
     ErrorSeverity (..),
     PublicErrorInfo (..),
-    Descriptive (..),
     RequestContent (..),
     RequestInfo (..),
     InternalErrorInfo (..),
     HasErrorInfo (..),
+    publicErrorInfo,
+    internalErrorInfo,
     SomeError (..),
     UncaughtException (..),
     CaughtException (..),

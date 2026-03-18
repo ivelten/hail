@@ -16,30 +16,37 @@
 --
 -- === Simple errors
 --
--- For enum-style error types, derive 'Data.Data.Data' and implement 'Descriptive'.
--- The 'publicErrorInfo' default derives the error 'code' from the constructor name
--- and the 'publicMessage' from 'description':
+-- Implement 'HasErrorInfo' with just 'errorMessage'. Derive 'Data.Data.Data' to get an
+-- automatic error 'errorCode' derived from the constructor name:
 --
 -- >>> {-# LANGUAGE DeriveDataTypeable #-}
 -- >>>
 -- >>> data UserError = NameEmpty | EmailInvalid
 -- >>>   deriving (Show, Data)
 -- >>>
--- >>> instance Descriptive UserError where
--- >>>   description NameEmpty    = "Name cannot be empty"
--- >>>   description EmailInvalid = "Email format is invalid"
--- >>>
--- >>> instance HasErrorInfo UserError
+-- >>> instance HasErrorInfo UserError where
+-- >>>   errorMessage NameEmpty    = "Name cannot be empty"
+-- >>>   errorMessage EmailInvalid = "Email format is invalid"
+--
+-- Note: the error code is derived directly from the constructor name, so renaming
+-- a constructor silently changes its code. Treat constructor names as part of your
+-- public API contract when using this approach.
 --
 -- === Full control
 --
--- Implement 'HasErrorInfo' directly when you need custom codes or 'details':
+-- Override any individual field method when you need custom behaviour. You can override
+-- as many or as few as you need — all non-required methods have sensible defaults:
 --
 -- >>> instance HasErrorInfo UserError where
--- >>>   publicErrorInfo NameEmpty =
--- >>>     PublicErrorInfo "Name cannot be empty" "UserNameEmpty" Nothing
--- >>>   publicErrorInfo EmailInvalid =
--- >>>     PublicErrorInfo "Email format is invalid" "UserEmailInvalid" Nothing
+-- >>>   errorMessage NameEmpty    = "Name cannot be empty"
+-- >>>   errorMessage EmailInvalid = "Email format is invalid"
+-- >>>
+-- >>>   errorCode NameEmpty    = "UserNameEmpty"
+-- >>>   errorCode EmailInvalid = "UserEmailInvalid"
+-- >>>
+-- >>>   -- Override internal fields only when you have extra diagnostic context:
+-- >>>   errorSeverity EmailInvalid = Critical
+-- >>>   errorInternalMessage NameEmpty = Just "name field was empty string after trimming"
 --
 -- === Running your Railway
 --
@@ -56,11 +63,12 @@
 module Monad.Rail.Error
   ( ErrorSeverity (..),
     PublicErrorInfo (..),
-    Descriptive (..),
     RequestContent (..),
     RequestInfo (..),
     InternalErrorInfo (..),
     HasErrorInfo (..),
+    publicErrorInfo,
+    internalErrorInfo,
     SomeError (..),
     UncaughtException (..),
     CaughtException (..),
@@ -221,27 +229,6 @@ instance ToJSON RequestInfo where
 -- 'PublicErrorInfo', so none of these fields ever appear in public API responses.
 --
 -- See 'PublicErrorInfo' for the complementary record holding user-facing data.
---
--- == Capturing a call stack
---
--- To record where an error was thrown, add a 'GHC.Stack.HasCallStack' constraint
--- to the function that constructs the error and populate 'callStack':
---
--- >>> import GHC.Stack (HasCallStack, callStack)
--- >>>
--- >>> checkAge :: HasCallStack => Int -> Rail ()
--- >>> checkAge age
--- >>>   | age < 0 = throwError (SomeError AgeTooNegative)
--- >>>   | otherwise = pure ()
--- >>>
--- >>> instance HasErrorInfo AgeError where
--- >>>   publicErrorInfo AgeTooNegative = PublicErrorInfo "Age must be non-negative" "AgeNegative" Nothing
--- >>>   internalErrorInfo AgeTooNegative = (internalErrorInfo AgeTooNegative)
--- >>>     { callStack = Just GHC.Stack.callStack }
--- >>>   publicErrorInfo AgeTooNegative = PublicErrorInfo "Age must be non-negative" "AgeNegative" Nothing
---
--- Note: if both 'callStack' (from this module) and 'GHC.Stack.callStack' (the
--- implicit-parameter accessor) are in scope, qualify the latter to avoid ambiguity.
 data InternalErrorInfo = InternalErrorInfo
   { -- | An optional technical message for administrators and logs.
     -- This message can contain sensitive infrastructure details, stack traces,
@@ -273,7 +260,7 @@ data InternalErrorInfo = InternalErrorInfo
     -- | The name of the application component or subsystem that produced this error.
     --
     -- Useful for filtering errors by origin in log aggregators without having to
-    -- parse the error 'code'. For example: @\"auth\"@, @\"payment\"@, @\"user-service\"@.
+    -- parse the error 'errorCode'. For example: @\"auth\"@, @\"payment\"@, @\"user-service\"@.
     component :: Maybe Text,
     -- | An optional identifier for the user making the request.
     --
@@ -302,7 +289,9 @@ data InternalErrorInfo = InternalErrorInfo
     -- function that builds the error and passing 'GHC.Stack.callStack'. Serialized
     -- as a human-readable string via 'GHC.Stack.prettyCallStack'.
     --
-    -- See the module-level example for the recommended pattern.
+    -- Note: the field name @callStack@ shadows the 'GHC.Stack.callStack' implicit-parameter
+    -- accessor when both are in scope. Qualify the latter as @GHC.Stack.callStack@ to avoid
+    -- ambiguity.
     callStack :: Maybe CallStack
   }
   deriving (Show)
@@ -322,123 +311,152 @@ instance ToJSON InternalErrorInfo where
           ("callStack" .=) . T.pack . prettyCallStack <$> callStack internal
         ]
 
--- | Provides a human-readable description and a machine-readable name for an error,
--- used as 'publicMessage' and 'code' respectively in 'PublicErrorInfo' when relying
--- on the default 'HasErrorInfo' implementation.
+-- | A type class for converting custom error types into serializable error information.
 --
--- Implement this alongside a no-body 'HasErrorInfo' instance for simple, enum-style
--- error types. See 'HasErrorInfo' for the full usage pattern.
-class Descriptive a where
-  -- | Returns a human-readable description safe to display to end users.
-  description :: a -> Text
-
-  -- | Returns the machine-readable error code for this value.
-  --
-  -- The default implementation derives the code from the constructor name via
-  -- 'Data.Data.toConstr', requiring a 'Data.Data.Data' instance. Override this
-  -- method when you need a code that differs from the constructor name.
-  --
-  -- Example: @name NameEmpty = \"UserNameEmpty\"@
-  name :: a -> Text
-  default name :: (Data a) => a -> Text
-  name a = T.pack (show (toConstr a))
-
--- | A type class for converting custom error types into 'PublicErrorInfo' and 'InternalErrorInfo'.
+-- Implement 'errorMessage' — the only required method — to integrate any error type
+-- with the Railway error system. All other methods have defaults and can be overridden
+-- individually as needed.
 --
--- There are two ways to integrate your error type:
+-- Use 'publicErrorInfo' and 'internalErrorInfo' to assemble the corresponding records
+-- from an instance.
 --
--- == Simple errors: 'Descriptive' + 'Data.Data.Data'
+-- == Simple errors: implement 'errorMessage' only
 --
--- For enum-style error types, derive 'Data.Data.Data' and implement 'Descriptive'.
--- The default 'publicErrorInfo' calls 'name' for the 'code' (which by default derives
--- it from the constructor name via 'Data.Data.toConstr') and 'description' for the
--- 'publicMessage'. No 'HasErrorInfo' body is needed:
+-- Derive 'Data.Data.Data' and implement 'errorMessage'. The 'errorCode' default derives
+-- the error code from the constructor name via 'Data.Data.toConstr':
 --
 -- >>> {-# LANGUAGE DeriveDataTypeable #-}
 -- >>>
 -- >>> data UserError = NameEmpty | EmailInvalid
 -- >>>   deriving (Show, Data)
 -- >>>
--- >>> instance Descriptive UserError where
--- >>>   description NameEmpty    = "Name cannot be empty"
--- >>>   description EmailInvalid = "Email format is invalid"
--- >>>
--- >>> instance HasErrorInfo UserError
+-- >>> instance HasErrorInfo UserError where
+-- >>>   errorMessage NameEmpty    = "Name cannot be empty"
+-- >>>   errorMessage EmailInvalid = "Email format is invalid"
 -- >>> -- publicErrorInfo NameEmpty
 -- >>> --   = PublicErrorInfo { publicMessage = "Name cannot be empty"
 -- >>> --                     , code          = "NameEmpty"
 -- >>> --                     , details       = Nothing }
 --
--- Note: the error 'code' is derived directly from the constructor name, so renaming
--- a constructor silently changes its code. Treat constructor names as part of your
--- public API contract when using this approach.
+-- == Full control: override any field method
 --
--- == Full control: implement 'publicErrorInfo' manually
---
--- Implement 'publicErrorInfo' directly when you need custom codes, per-constructor
--- 'details', or constructor-specific behaviour. You can still rely on the default
--- 'internalErrorInfo' and only override it when needed:
+-- Override individual methods when you need custom codes, details, or internal context.
+-- Methods you do not override keep their defaults:
 --
 -- >>> instance HasErrorInfo UserError where
--- >>>   publicErrorInfo NameEmpty =
--- >>>     PublicErrorInfo "Name cannot be empty" "UserNameEmpty" Nothing
--- >>>   publicErrorInfo EmailInvalid =
--- >>>     PublicErrorInfo "Email format is invalid" "UserEmailInvalid" Nothing
+-- >>>   errorMessage NameEmpty    = "Name cannot be empty"
+-- >>>   errorMessage EmailInvalid = "Email format is invalid"
 -- >>>
--- >>>   -- Override internalErrorInfo only when you have extra diagnostic context:
--- >>>   internalErrorInfo NameEmpty =
--- >>>     (internalErrorInfo NameEmpty)
--- >>>       { internalMessage = Just "name field was empty string after trimming"
--- >>>       , severity = Critical
--- >>>       }
+-- >>>   errorCode NameEmpty    = "UserNameEmpty"
+-- >>>   errorCode EmailInvalid = "UserEmailInvalid"
+-- >>>
+-- >>>   errorSeverity _               = Critical
+-- >>>   errorInternalMessage NameEmpty = Just "name field was empty string after trimming"
+--
+-- == Note on 'errorCallStack' and 'GHC.Stack.callStack'
+--
+-- The assembled 'InternalErrorInfo' record has a field named @callStack@. If both
+-- 'InternalErrorInfo' and 'GHC.Stack' are imported unqualified, the name @callStack@
+-- may be ambiguous. Qualify 'GHC.Stack.callStack' to avoid ambiguity.
 class HasErrorInfo e where
-  -- | Converts the error into public-facing 'PublicErrorInfo'.
-  --
-  -- The default implementation requires 'Descriptive': it uses 'name' for 'code'
-  -- and 'description' for 'publicMessage', with 'details' set to 'Nothing'.
-  -- Override this method for custom codes or details.
-  publicErrorInfo :: e -> PublicErrorInfo
-  default publicErrorInfo :: (Descriptive e) => e -> PublicErrorInfo
-  publicErrorInfo e =
-    PublicErrorInfo
-      { publicMessage = description e,
-        code = name e,
-        details = Nothing
-      }
+  -- | A human-readable message safe to display to end users. This is the only required method.
+  errorMessage :: e -> Text
 
-  -- | Converts the error into internal diagnostic 'InternalErrorInfo'.
+  -- | A machine-readable error code. Defaults to the constructor name via 'Data.Data.toConstr'.
   --
-  -- The default implementation returns an 'InternalErrorInfo' with all optional
-  -- fields set to 'Nothing' and severity set to 'Error'. Override this method
-  -- when your error needs to carry sensitive diagnostic context for logging.
-  internalErrorInfo :: e -> InternalErrorInfo
-  internalErrorInfo _ =
-    InternalErrorInfo
-      { internalMessage = Nothing,
-        severity = Error,
-        exception = Nothing,
-        requestInfo = Nothing,
-        component = Nothing,
-        userId = Nothing,
-        entrypoint = Nothing,
-        componentVersion = Nothing,
-        callStack = Nothing
-      }
+  -- Override when you need a code that differs from the constructor name.
+  --
+  -- Example: @errorCode NameEmpty = \"UserNameEmpty\"@
+  errorCode :: e -> Text
+  default errorCode :: (Data e) => e -> Text
+  errorCode e = T.pack (show (toConstr e))
+
+  -- | Optional JSON details safe to share with callers. Defaults to 'Nothing'.
+  errorDetails :: e -> Maybe Value
+  errorDetails _ = Nothing
+
+  -- | Severity level of the error. Defaults to 'Error'.
+  errorSeverity :: e -> ErrorSeverity
+  errorSeverity _ = Error
+
+  -- | An optional technical message for logs, safe to contain sensitive details.
+  -- Defaults to 'Nothing'.
+  errorInternalMessage :: e -> Maybe Text
+  errorInternalMessage _ = Nothing
+
+  -- | An optional underlying runtime exception. Defaults to 'Nothing'.
+  errorException :: e -> Maybe E.SomeException
+  errorException _ = Nothing
+
+  -- | Optional structured HTTP request context for tracing. Defaults to 'Nothing'.
+  errorRequestInfo :: e -> Maybe RequestInfo
+  errorRequestInfo _ = Nothing
+
+  -- | The application component or subsystem that produced the error. Defaults to 'Nothing'.
+  errorComponent :: e -> Maybe Text
+  errorComponent _ = Nothing
+
+  -- | An identifier for the user making the request. Defaults to 'Nothing'.
+  errorUserId :: e -> Maybe Text
+  errorUserId _ = Nothing
+
+  -- | The API endpoint or handler that was called. Defaults to 'Nothing'.
+  errorEntrypoint :: e -> Maybe Text
+  errorEntrypoint _ = Nothing
+
+  -- | The version of the component running when the error occurred. Defaults to 'Nothing'.
+  errorComponentVersion :: e -> Maybe Text
+  errorComponentVersion _ = Nothing
+
+  -- | The Haskell call stack at the point the error was constructed. Defaults to 'Nothing'.
+  --
+  -- Populate by adding 'GHC.Stack.HasCallStack' to the function that builds the error
+  -- and passing @Just GHC.Stack.callStack@.
+  errorCallStack :: e -> Maybe CallStack
+  errorCallStack _ = Nothing
+
+-- | Assembles a 'PublicErrorInfo' from a 'HasErrorInfo' instance.
+--
+-- This is the canonical way to obtain the public-facing error record for logging
+-- or serialization. The result contains only data safe to expose to end users.
+publicErrorInfo :: (HasErrorInfo e) => e -> PublicErrorInfo
+publicErrorInfo e =
+  PublicErrorInfo
+    { publicMessage = errorMessage e,
+      code = errorCode e,
+      details = errorDetails e
+    }
+
+-- | Assembles an 'InternalErrorInfo' from a 'HasErrorInfo' instance.
+--
+-- This is the canonical way to obtain the internal diagnostic record for
+-- server-side logging and monitoring. Never include this in API responses.
+internalErrorInfo :: (HasErrorInfo e) => e -> InternalErrorInfo
+internalErrorInfo e =
+  InternalErrorInfo
+    { internalMessage = errorInternalMessage e,
+      severity = errorSeverity e,
+      exception = errorException e,
+      requestInfo = errorRequestInfo e,
+      component = errorComponent e,
+      userId = errorUserId e,
+      entrypoint = errorEntrypoint e,
+      componentVersion = errorComponentVersion e,
+      callStack = errorCallStack e
+    }
 
 -- | Marker type for the default error code and message used by
 -- 'Monad.Rail.Types.tryRail' when an IO action throws an uncaught exception.
 --
--- Its 'Descriptive' instance provides the generic public message shown to end
--- users and the default error code @\"UncaughtException\"@ derived from the
--- constructor name. Both are consumed by 'CaughtException'\'s 'HasErrorInfo'
--- instance so the values stay in one place.
+-- Its 'HasErrorInfo' instance provides the generic public message shown to end users
+-- and the default error code @\"UncaughtException\"@ derived from the constructor name.
+-- Both are consumed by 'CaughtException'\'s 'HasErrorInfo' instance so the values
+-- stay in one place.
 data UncaughtException = UncaughtException
   deriving (Show, Data)
 
-instance Descriptive UncaughtException where
-  description _ = "An unexpected error occurred"
-
-instance HasErrorInfo UncaughtException
+instance HasErrorInfo UncaughtException where
+  errorMessage _ = "An unexpected error occurred"
 
 -- | Wrapper for caught exceptions that can be used as an error type.
 --
@@ -446,9 +464,10 @@ instance HasErrorInfo UncaughtException
 -- compatible with the Railway error system via its 'HasErrorInfo' instance.
 -- It is the error type produced by 'Monad.Rail.Types.tryRail' when an IO action throws.
 --
--- The 'publicMessage' of the 'PublicErrorInfo' is intentionally generic so that internal
--- details are never accidentally exposed to end users. The original exception is
--- stored in the 'exception' field of 'InternalErrorInfo' for logging and debugging.
+-- The 'publicMessage' of the assembled 'PublicErrorInfo' is intentionally generic so
+-- that internal details are never accidentally exposed to end users. The original
+-- exception is stored in the 'exception' field of 'InternalErrorInfo' for logging
+-- and debugging.
 --
 -- 'caughtCode' lets you assign a domain-specific error code when you catch
 -- exceptions manually, rather than relying on the default @\"UncaughtException\"@:
@@ -472,7 +491,7 @@ instance HasErrorInfo UncaughtException
 -- >>>     Left ex   -> throwCaughtEx "DbQueryFailed" ex
 --
 -- When using 'Monad.Rail.Types.tryRail', the code defaults to @\"UncaughtException\"@ and the
--- 'callStack' is captured automatically at the call site.
+-- call stack is captured automatically at the call site.
 data CaughtException = CaughtException
   { -- | Machine-readable error code exposed in 'PublicErrorInfo'.
     -- Defaults to @\"UncaughtException\"@ when produced by 'Monad.Rail.Types.tryRail'.
@@ -482,9 +501,9 @@ data CaughtException = CaughtException
     -- | Optional Haskell call stack at the catch site.
     -- Populated automatically by 'Monad.Rail.Types.tryRail' via 'GHC.Stack.HasCallStack'.
     caughtCallStack :: Maybe CallStack,
-    -- | Optional public message override for 'PublicErrorInfo'.
+    -- | Optional public message override.
     --
-    -- When 'Nothing', falls back to @'description' 'UncaughtException'@
+    -- When 'Nothing', falls back to @'errorMessage' 'UncaughtException'@
     -- (@\"An unexpected error occurred\"@). Set this via
     -- 'Monad.Rail.Types.tryRailWithError' to surface a domain-specific message.
     caughtMessage :: Maybe Text
@@ -494,24 +513,12 @@ instance Show CaughtException where
   show ce = "Caught exception: " <> E.displayException (caughtEx ce)
 
 instance HasErrorInfo CaughtException where
-  publicErrorInfo ce =
-    PublicErrorInfo
-      { publicMessage = fromMaybe (description UncaughtException) (caughtMessage ce),
-        code = caughtCode ce,
-        details = Nothing
-      }
-  internalErrorInfo ce =
-    InternalErrorInfo
-      { internalMessage = Just (T.pack (E.displayException (caughtEx ce))),
-        severity = Critical,
-        exception = Just (caughtEx ce),
-        requestInfo = Nothing,
-        component = Nothing,
-        userId = Nothing,
-        entrypoint = Nothing,
-        componentVersion = Nothing,
-        callStack = caughtCallStack ce
-      }
+  errorMessage ce = fromMaybe (errorMessage UncaughtException) (caughtMessage ce)
+  errorCode ce = caughtCode ce
+  errorSeverity _ = Critical
+  errorInternalMessage ce = Just (T.pack (E.displayException (caughtEx ce)))
+  errorException ce = Just (caughtEx ce)
+  errorCallStack ce = caughtCallStack ce
 
 -- | A wrapper type that can hold any application error implementing 'HasErrorInfo'.
 --
@@ -554,8 +561,18 @@ instance Show SomeError where
   show (SomeError e) = show e
 
 instance HasErrorInfo SomeError where
-  publicErrorInfo (SomeError e) = publicErrorInfo e
-  internalErrorInfo (SomeError e) = internalErrorInfo e
+  errorMessage (SomeError e) = errorMessage e
+  errorCode (SomeError e) = errorCode e
+  errorDetails (SomeError e) = errorDetails e
+  errorSeverity (SomeError e) = errorSeverity e
+  errorInternalMessage (SomeError e) = errorInternalMessage e
+  errorException (SomeError e) = errorException e
+  errorRequestInfo (SomeError e) = errorRequestInfo e
+  errorComponent (SomeError e) = errorComponent e
+  errorUserId (SomeError e) = errorUserId e
+  errorEntrypoint (SomeError e) = errorEntrypoint e
+  errorComponentVersion (SomeError e) = errorComponentVersion e
+  errorCallStack (SomeError e) = errorCallStack e
 
 -- | Represents a collection of one or more application errors accumulated during a Railway computation.
 --

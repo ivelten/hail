@@ -25,14 +25,17 @@ data TestError = ErrA | ErrB | ErrC
 data TryError = QueryFailed | ConnectionLost
   deriving (Show, Data)
 
-instance Descriptive TryError where
-  description QueryFailed    = "A database query failed"
-  description ConnectionLost = "Lost connection to the database"
+instance HasErrorInfo TryError where
+  errorMessage QueryFailed    = "A database query failed"
+  errorMessage ConnectionLost = "Lost connection to the database"
 
 instance HasErrorInfo TestError where
-  publicErrorInfo ErrA = PublicErrorInfo { publicMessage = "Error A", code = "ErrA", details = Nothing }
-  publicErrorInfo ErrB = PublicErrorInfo { publicMessage = "Error B", code = "ErrB", details = Nothing }
-  publicErrorInfo ErrC = PublicErrorInfo { publicMessage = "Error C", code = "ErrC", details = Nothing }
+  errorMessage ErrA = "Error A"
+  errorMessage ErrB = "Error B"
+  errorMessage ErrC = "Error C"
+  errorCode ErrA = "ErrA"
+  errorCode ErrB = "ErrB"
+  errorCode ErrC = "ErrC"
 
 throw :: TestError -> Rail ()
 throw e = throwError (SomeError e)
@@ -291,6 +294,15 @@ spec = do
           let internal = (internalErrorInfo . NE.head . getErrors) err
            in callStack internal `shouldSatisfy` isJust
 
+    it "uses the generic public message regardless of code" $ do
+      let boom = Ex.throwIO (userError "internal detail")
+      result <- runRail (tryRailWithCode "MY_CODE" boom :: Rail ())
+      case result of
+        Right _ -> expectationFailure "expected Left, got Right"
+        Left err ->
+          (publicMessage . publicErrorInfo . NE.head . getErrors) err
+            `shouldBe` "An unexpected error occurred"
+
     it "can be partially applied to create a reusable helper" $ do
       let tryCustom = tryRailWithCode "CUSTOM_CODE"
           boom      = Ex.throwIO (userError "oops")
@@ -365,7 +377,7 @@ spec = do
         Right _ -> expectationFailure "expected Left, got Right"
         Left _  -> pure ()
 
-    it "uses the error code derived from the Descriptive value" $ do
+    it "uses the error code derived from the HasErrorInfo instance" $ do
       let boom = Ex.throwIO (userError "oops")
       result <- runRail (tryRailWithError (\_ -> QueryFailed) boom :: Rail ())
       case result of
@@ -373,7 +385,7 @@ spec = do
         Left err ->
           (code . publicErrorInfo . NE.head . getErrors) err `shouldBe` "QueryFailed"
 
-    it "uses the description as the public message" $ do
+    it "uses the publicMessage as the public message" $ do
       let boom = Ex.throwIO (userError "oops")
       result <- runRail (tryRailWithError (\_ -> QueryFailed) boom :: Rail ())
       case result of

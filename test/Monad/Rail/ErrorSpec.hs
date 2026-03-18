@@ -24,52 +24,24 @@ data TestError = TestErrorA | TestErrorB
   deriving (Show, Eq)
 
 instance HasErrorInfo TestError where
-  publicErrorInfo TestErrorA =
-    PublicErrorInfo
-      { publicMessage = "Error A occurred",
-        code = "TestErrorA",
-        details = Nothing
-      }
-  publicErrorInfo TestErrorB =
-    PublicErrorInfo
-      { publicMessage = "Error B occurred",
-        code = "TestErrorB",
-        details = Just (object ["key" .= ("value" :: Text)])
-      }
-  internalErrorInfo TestErrorA =
-    InternalErrorInfo
-      { internalMessage = Just "Internal details for A",
-        severity = Error,
-        exception = Nothing,
-        requestInfo = Nothing,
-        component = Nothing,
-        userId = Nothing,
-        entrypoint = Nothing,
-        componentVersion = Nothing,
-        callStack = Nothing
-      }
-  internalErrorInfo TestErrorB =
-    InternalErrorInfo
-      { internalMessage = Nothing,
-        severity = Critical,
-        exception = Nothing,
-        requestInfo = Nothing,
-        component = Nothing,
-        userId = Nothing,
-        entrypoint = Nothing,
-        componentVersion = Nothing,
-        callStack = Nothing
-      }
+  errorMessage TestErrorA = "Error A occurred"
+  errorMessage TestErrorB = "Error B occurred"
+  errorCode TestErrorA = "TestErrorA"
+  errorCode TestErrorB = "TestErrorB"
+  errorDetails TestErrorB = Just (object ["key" .= ("value" :: Text)])
+  errorDetails _ = Nothing
+  errorInternalMessage TestErrorA = Just "Internal details for A"
+  errorInternalMessage _ = Nothing
+  errorSeverity TestErrorB = Critical
+  errorSeverity _ = Error
 
--- Simple error type using the Descriptive + Data default
+-- Simple error type using the Data-derived code default
 data SimpleError = NameEmpty | EmailInvalid
   deriving (Show, Data)
 
-instance Descriptive SimpleError where
-  description NameEmpty   = "Name cannot be empty"
-  description EmailInvalid = "Email format is invalid"
-
-instance HasErrorInfo SimpleError
+instance HasErrorInfo SimpleError where
+  errorMessage NameEmpty    = "Name cannot be empty"
+  errorMessage EmailInvalid = "Email format is invalid"
 
 mkSomeError :: TestError -> SomeError
 mkSomeError = SomeError
@@ -321,25 +293,39 @@ spec = do
         encode (toJSON emptyRi {requestBody = Just (TextBody "data")})
           `shouldSatisfy` contains "\"body\""
 
-  describe "Descriptive" $ do
-    it "description returns the configured message for each constructor" $ do
-      description NameEmpty    `shouldBe` ("Name cannot be empty" :: Text)
-      description EmailInvalid `shouldBe` ("Email format is invalid" :: Text)
-    it "name defaults to the constructor name via Data" $ do
-      name NameEmpty    `shouldBe` ("NameEmpty" :: Text)
-      name EmailInvalid `shouldBe` ("EmailInvalid" :: Text)
+  describe "HasErrorInfo simple implementation" $ do
+    it "errorMessage returns the configured message for each constructor" $ do
+      errorMessage NameEmpty    `shouldBe` ("Name cannot be empty" :: Text)
+      errorMessage EmailInvalid `shouldBe` ("Email format is invalid" :: Text)
+    it "errorCode defaults to the constructor name via Data" $ do
+      errorCode NameEmpty    `shouldBe` ("NameEmpty" :: Text)
+      errorCode EmailInvalid `shouldBe` ("EmailInvalid" :: Text)
 
-  describe "HasErrorInfo default publicErrorInfo" $ do
-    it "derives code from the constructor name" $
+  describe "publicErrorInfo" $ do
+    it "assembles code from the constructor name" $
       code (publicErrorInfo NameEmpty) `shouldBe` "NameEmpty"
-    it "derives code from each constructor independently" $
+    it "assembles code from each constructor independently" $
       code (publicErrorInfo EmailInvalid) `shouldBe` "EmailInvalid"
-    it "uses description as publicMessage" $
+    it "assembles publicMessage from errorMessage" $
       publicMessage (publicErrorInfo NameEmpty) `shouldBe` "Name cannot be empty"
-    it "sets details to Nothing" $
+    it "sets details to Nothing by default" $
       details (publicErrorInfo NameEmpty) `shouldBe` Nothing
-    it "default internalErrorInfo has Error severity" $
+    it "assembles details from errorDetails when Just" $
+      details (publicErrorInfo (mkSomeError TestErrorB)) `shouldBe` Just (object ["key" .= ("value" :: Text)])
+
+  describe "internalErrorInfo" $ do
+    it "default severity is Error" $
       severity (internalErrorInfo NameEmpty) `shouldBe` Error
+    it "all optional fields default to Nothing for a simple error" $ do
+      let internal = internalErrorInfo NameEmpty
+      internalMessage internal `shouldSatisfy` isNothing
+      exception internal       `shouldSatisfy` isNothing
+      requestInfo internal     `shouldSatisfy` isNothing
+      component internal       `shouldSatisfy` isNothing
+      userId internal          `shouldSatisfy` isNothing
+      entrypoint internal      `shouldSatisfy` isNothing
+      componentVersion internal `shouldSatisfy` isNothing
+      callStack internal       `shouldSatisfy` isNothing
 
   describe "CaughtException" $ do
     it "Show includes the exception message" $ do
@@ -353,6 +339,10 @@ spec = do
     it "publicErrorInfo message is always the generic safe message" $ do
       let ce = CaughtException "ANY_CODE" (Ex.SomeException (userError "internal detail")) Nothing Nothing
       publicMessage (publicErrorInfo ce) `shouldBe` "An unexpected error occurred"
+
+    it "publicErrorInfo uses caughtMessage as public message when Just" $ do
+      let ce = CaughtException "CODE" (Ex.SomeException (userError "detail")) Nothing (Just "Custom public message")
+      publicMessage (publicErrorInfo ce) `shouldBe` "Custom public message"
 
     it "internalErrorInfo has Critical severity" $ do
       let ce = CaughtException "CODE" (Ex.SomeException (userError "oops")) Nothing Nothing
@@ -383,6 +373,16 @@ spec = do
     it "internalErrorInfo extracts correct severity" $ do
       let internal = internalErrorInfo (mkSomeError TestErrorA)
       severity internal `shouldBe` Error
+
+    it "publicErrorInfo delegates errorDetails through the existential" $ do
+      details (publicErrorInfo (mkSomeError TestErrorB)) `shouldBe` Just (object ["key" .= ("value" :: Text)])
+
+    it "internalErrorInfo delegates errorInternalMessage through the existential" $ do
+      internalMessage (internalErrorInfo (mkSomeError TestErrorA)) `shouldBe` Just "Internal details for A"
+
+    it "internalErrorInfo optional fields are Nothing when not set" $ do
+      let internal = internalErrorInfo (mkSomeError TestErrorA)
+      exception internal `shouldSatisfy` isNothing
 
     it "wraps different error types, each with their own info" $ do
       let pubA = publicErrorInfo (mkSomeError TestErrorA)

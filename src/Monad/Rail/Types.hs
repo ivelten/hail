@@ -91,7 +91,7 @@ import Control.Monad.IO.Class (MonadIO, liftIO)
 import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.Text as T
 import GHC.Stack (HasCallStack, callStack)
-import Monad.Rail.Error (CaughtException (..), Descriptive (..), Failure (..), SomeError (..), UncaughtException (..))
+import Monad.Rail.Error (CaughtException (..), Failure (..), HasErrorInfo (..), SomeError (..), UncaughtException (..))
 
 -- | The Railway-Oriented monad transformer.
 --
@@ -240,11 +240,11 @@ throwError err = RailT $ E.throwError $ Failure (err :| [])
 -- >>>     Right row -> pure row
 -- >>>     Left ex   -> throwCaughtEx "DbQueryFailed" ex
 throwCaughtEx :: (HasCallStack, Monad m) => T.Text -> Ex.SomeException -> RailT Failure m a
-throwCaughtEx code ex = throwError (SomeError caught)
+throwCaughtEx errCode ex = throwError (SomeError caught)
   where
     caught =
       CaughtException
-        { caughtCode = code,
+        { caughtCode = errCode,
           caughtEx = ex,
           caughtCallStack = Just callStack,
           caughtMessage = Nothing
@@ -255,7 +255,7 @@ throwCaughtEx code ex = throwError (SomeError caught)
 --
 -- This is a convenience wrapper around 'tryRailWithCode' that uses the default
 -- error code @\"UncaughtException\"@ (derived from 'UncaughtException' via
--- 'Descriptive'). Use 'tryRailWithCode' for a custom code with the same generic
+-- 'HasErrorInfo'). Use 'tryRailWithCode' for a custom code with the same generic
 -- message, or 'tryRailWithError' to also customise the public message.
 --
 -- == Example
@@ -269,7 +269,7 @@ throwCaughtEx code ex = throwError (SomeError caught)
 -- >>>   validateName content <!> validateEmail content
 -- >>>   saveToDb content
 tryRail :: (HasCallStack) => IO a -> Rail a
-tryRail = tryRailWithCode (name UncaughtException)
+tryRail = tryRailWithCode (errorCode UncaughtException)
 
 -- | Like 'tryRail', but with a custom error code.
 --
@@ -291,7 +291,7 @@ tryRail = tryRailWithCode (name UncaughtException)
 -- wrapper's own signature so the call stack is captured at each call site
 -- rather than frozen at the definition of the wrapper.
 tryRailWithCode :: (HasCallStack) => T.Text -> IO a -> Rail a
-tryRailWithCode code action = do
+tryRailWithCode errCode action = do
   result <- liftIO $ Ex.try action
   case result of
     Right value -> pure value
@@ -299,19 +299,19 @@ tryRailWithCode code action = do
       where
         caught =
           CaughtException
-            { caughtCode = code,
+            { caughtCode = errCode,
               caughtEx = ex,
               caughtCallStack = Just callStack,
               caughtMessage = Nothing
             }
 
 -- | Like 'tryRailWithCode', but derives the error code and public message from
--- a 'Descriptive' value built from the caught exception.
+-- a 'HasErrorInfo' value built from the caught exception.
 --
 -- The error-building function receives the 'Ex.SomeException' that was thrown,
 -- allowing the resulting error value to carry information extracted from the
--- exception itself. The 'Descriptive' instance then supplies 'name' as the
--- error code and 'description' as the public message.
+-- exception itself. The 'HasErrorInfo' instance then supplies 'errorCode' as the
+-- error code and 'errorMessage' as the public message.
 --
 -- == Example
 --
@@ -320,9 +320,9 @@ tryRailWithCode code action = do
 -- >>> data DbError = QueryFailed Text | ConnectionLost
 -- >>>   deriving (Show, Data)
 -- >>>
--- >>> instance Descriptive DbError where
--- >>>   description (QueryFailed _) = "A database query failed"
--- >>>   description ConnectionLost  = "Lost connection to the database"
+-- >>> instance HasErrorInfo DbError where
+-- >>>   errorMessage (QueryFailed _) = "A database query failed"
+-- >>>   errorMessage ConnectionLost  = "Lost connection to the database"
 -- >>>
 -- >>> safeQuery :: Rail [Row]
 -- >>> safeQuery = tryRailWithError (\_ -> ConnectionLost) runQuery
@@ -333,7 +333,7 @@ tryRailWithCode code action = do
 --
 -- Note: add 'GHC.Stack.HasCallStack' to any wrapper so the call stack is
 -- captured at each call site rather than frozen at the wrapper's definition.
-tryRailWithError :: (HasCallStack, Descriptive e) => (Ex.SomeException -> e) -> IO a -> Rail a
+tryRailWithError :: (HasCallStack, HasErrorInfo e) => (Ex.SomeException -> e) -> IO a -> Rail a
 tryRailWithError mkErr action = do
   result <- liftIO $ Ex.try action
   case result of
@@ -343,10 +343,10 @@ tryRailWithError mkErr action = do
         err = mkErr ex
         caught =
           CaughtException
-            { caughtCode = name err,
+            { caughtCode = errorCode err,
               caughtEx = ex,
               caughtCallStack = Just callStack,
-              caughtMessage = Just (description err)
+              caughtMessage = Just (errorMessage err)
             }
 
 -- | Accumulates errors from two Railway validations.
