@@ -5,7 +5,7 @@
 * First release.
 * `RailT` monad transformer for Railway-Oriented Programming.
 * `Rail` type alias for `RailT Failure IO`.
-* `throwError` for single-error failures.
+* `throwError` for single-error failures. Accepts any error type with `HasErrorInfo`, `Show`, and `Typeable` constraints — wraps it in `SomeError` automatically.
 * `<!>` operator for parallel validation with error accumulation.
 * `HasErrorInfo` typeclass for custom error types. Only `errorPublicMessage :: e -> Text` is required. All other methods have defaults:
   * `errorCode :: e -> Text` — defaults to the constructor name via `Data.toConstr` (requires `Data`).

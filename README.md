@@ -49,17 +49,17 @@ When you need custom codes or extra per-constructor behaviour, override individu
 ```haskell
 validateName :: String -> Rail ()
 validateName name
-  | null name = throwError (SomeError NameEmpty)
+  | null name = throwError NameEmpty
   | otherwise = pure ()
 
 validateEmail :: String -> Rail ()
 validateEmail email
-  | '@' `notElem` email = throwError (SomeError EmailInvalid)
+  | '@' `notElem` email = throwError EmailInvalid
   | otherwise = pure ()
 
 validateAge :: Int -> Rail ()
 validateAge age
-  | age < 18  = throwError (SomeError AgeTooLow)
+  | age < 18  = throwError AgeTooLow
   | otherwise = pure ()
 ```
 
@@ -115,7 +115,7 @@ Use `RailT` directly if you need a different base monad.
 Moves execution to the failure track with a single error:
 
 ```haskell
-throwError :: SomeError -> RailT Failure m a
+throwError :: (HasErrorInfo e, Show e, Typeable e) => e -> RailT Failure m a
 ```
 
 All subsequent steps in the `do`-block are skipped.

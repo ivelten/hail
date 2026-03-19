@@ -38,7 +38,7 @@ instance HasErrorInfo TestError where
   errorCode ErrC = "ErrC"
 
 throw :: TestError -> Rail ()
-throw e = throwError (SomeError e)
+throw = throwError
 
 -- ---------------------------------------------------------------------------
 -- Spec
@@ -57,7 +57,7 @@ spec = do
 
     it "returns Left for a failing computation with a custom base monad" $ do
       let comp :: RailT Failure (StateT Int IO) ()
-          comp = throwError (SomeError ErrA)
+          comp = throwError ErrA
       (result, _) <- runStateT (runRailT comp) 0
       case result of
         Right _ -> expectationFailure "expected Left, got Right"

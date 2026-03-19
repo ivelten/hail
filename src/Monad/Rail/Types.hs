@@ -49,16 +49,17 @@
 --
 -- == Throwing Errors
 --
--- Use 'throwError' to throw a 'SomeError':
+-- Use 'throwError' to throw any error with a 'HasErrorInfo' instance:
 --
 -- >>> checkName :: Rail ()
 -- >>> checkName = do
--- >>>   when (T.null name) $ throwError (SomeError NameEmpty)
+-- >>>   when (T.null name) $ throwError NameEmpty
 -- >>>   pure ()
 --
 -- == Combining Different Error Types
 --
--- The 'SomeError' wrapper allows you to combine errors from different sources:
+-- 'throwError' wraps your error in 'SomeError' automatically, so you can
+-- combine errors from different sources without manual wrapping:
 --
 -- >>> data UserError = NameEmpty
 -- >>> data DatabaseError = ConnectionFailed
@@ -68,8 +69,8 @@
 -- >>>
 -- >>> myRailway :: Rail ()
 -- >>> myRailway = do
--- >>>   throwError (SomeError NameEmpty)
--- >>>   throwError (SomeError ConnectionFailed)
+-- >>>   throwError NameEmpty
+-- >>>   throwError ConnectionFailed
 module Monad.Rail.Types
   ( RailT (..),
     Rail,
@@ -91,6 +92,7 @@ import qualified Control.Monad.Except as E
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.Text as T
+import Data.Typeable (Typeable)
 import GHC.Stack (HasCallStack, callStack)
 import Monad.Rail.Error (Failure (..), HasErrorInfo (..), SomeError (..), UnhandledException (..))
 
@@ -193,9 +195,12 @@ runRail = runExceptT . unRailT
 
 -- | Throws an application error in the Railway.
 --
--- This function wraps a single 'SomeError' in a 'Failure' container,
+-- This function wraps the error in 'SomeError' and then in a 'Failure' container,
 -- immediately failing the computation with that error. Subsequent operations in the
 -- do-block will not be executed.
+--
+-- Any error type with 'HasErrorInfo', 'Show', and 'Typeable' constraints can be
+-- thrown directly — no need to wrap it in 'SomeError' manually.
 --
 -- Use this function when you encounter an error condition that should stop execution.
 -- For validations where you want to collect multiple errors before failing, use the
@@ -205,7 +210,7 @@ runRail = runExceptT . unRailT
 --
 -- >>> checkAge :: Int -> Rail ()
 -- >>> checkAge age = do
--- >>>   when (age < 0) $ throwError (SomeError AgeNegative)
+-- >>>   when (age < 0) $ throwError AgeNegative
 -- >>>   pure ()
 --
 -- == Error Accumulation
@@ -217,8 +222,8 @@ runRail = runExceptT . unRailT
 -- >>> case result of
 -- >>>   Left errors -> mapM_ print (getErrors errors)
 -- >>>   Right () -> putStrLn "All valid!"
-throwError :: (Monad m) => SomeError -> RailT Failure m a
-throwError err = RailT $ E.throwError $ Failure (err :| [])
+throwError :: (HasErrorInfo e, Show e, Typeable e, Monad m) => e -> RailT Failure m a
+throwError err = RailT $ E.throwError $ Failure (SomeError err :| [])
 
 -- | Throw an unhandled IO exception as a Railway error using the default code @\"UnhandledException\"@.
 --
@@ -243,7 +248,7 @@ throwError err = RailT $ E.throwError $ Failure (err :| [])
 -- >>>     Right row -> pure row
 -- >>>     Left ex   -> throwUnhandledException ex
 throwUnhandledException :: (HasCallStack, Monad m) => Ex.SomeException -> RailT Failure m a
-throwUnhandledException ex = throwError (SomeError ue)
+throwUnhandledException ex = throwError ue
   where
     ue =
       UnhandledException
@@ -269,7 +274,7 @@ throwUnhandledException ex = throwError (SomeError ue)
 -- >>>     Right row -> pure row
 -- >>>     Left ex   -> throwUnhandledExceptionWithCode "DbQueryFailed" ex
 throwUnhandledExceptionWithCode :: (HasCallStack, Monad m) => T.Text -> Ex.SomeException -> RailT Failure m a
-throwUnhandledExceptionWithCode errCode ex = throwError (SomeError ue)
+throwUnhandledExceptionWithCode errCode ex = throwError ue
   where
     ue =
       UnhandledException
@@ -301,7 +306,7 @@ tryRail action = do
   result <- liftIO $ Ex.try action
   case result of
     Right value -> pure value
-    Left ex -> throwError (SomeError ue)
+    Left ex -> throwError ue
       where
         ue =
           UnhandledException
@@ -339,7 +344,7 @@ tryRailWithCode mkCode action = do
   result <- liftIO $ Ex.try action
   case result of
     Right value -> pure value
-    Left ex -> throwError (SomeError ue)
+    Left ex -> throwError ue
       where
         ue =
           UnhandledException
@@ -382,7 +387,7 @@ tryRailWithError mkErr action = do
   result <- liftIO $ Ex.try action
   case result of
     Right value -> pure value
-    Left ex -> throwError (SomeError ue)
+    Left ex -> throwError ue
       where
         err = mkErr ex
         ue =

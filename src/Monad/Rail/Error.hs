@@ -49,9 +49,9 @@
 --
 -- === Running your Railway
 --
--- 1. Wrap errors in 'SomeError':
+-- 1. Throw errors with 'Monad.Rail.Types.throwError':
 --
--- >>> throwError (SomeError NameEmpty)
+-- >>> throwError NameEmpty
 --
 -- 2. Run and handle the result:
 --
@@ -425,8 +425,8 @@ instance HasErrorInfo UnhandledException where
 -- >>>
 -- >>> validate :: Rail ()
 -- >>> validate = do
--- >>>   throwError (SomeError NameEmpty)      -- User error
--- >>>   throwError (SomeError ConnectionFailed)  -- Database error
+-- >>>   throwError NameEmpty         -- User error
+-- >>>   throwError ConnectionFailed -- Database error
 data SomeError
   = forall e.
     (HasErrorInfo e, Show e, Typeable e) =>
