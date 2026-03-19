@@ -402,7 +402,8 @@ instance HasErrorInfo UnhandledException where
 -- This existential type allows you to combine errors of different types in the same
 -- Railway computation. It uses existential quantification to hide the concrete error type
 -- while preserving the ability to extract error information via the 'HasErrorInfo'
--- interface.
+-- interface. The 'Typeable' constraint allows recovery of the original error type
+-- via 'Data.Typeable.cast' when needed.
 --
 -- This is particularly useful when you have multiple error sources (e.g., validation errors,
 -- database errors, network errors) and want to combine them in a single computation.
@@ -428,7 +429,7 @@ instance HasErrorInfo UnhandledException where
 -- >>>   throwError (SomeError ConnectionFailed)  -- Database error
 data SomeError
   = forall e.
-    (HasErrorInfo e, Show e) =>
+    (HasErrorInfo e, Show e, Typeable e) =>
     SomeError e
 
 instance ToJSON SomeError where
