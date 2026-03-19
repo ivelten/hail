@@ -63,7 +63,7 @@ module Monad.Rail.Error
   ( ErrorSeverity (..),
     PublicErrorInfo (..),
     InternalErrorInfo (..),
-    ErrorDetails (..),
+    SomeErrorDetails (..),
     HasErrorInfo (..),
     publicErrorInfo,
     internalErrorInfo,
@@ -110,16 +110,16 @@ instance ToJSON ErrorSeverity where
 --
 -- Example:
 --
--- >>> ErrorDetails ("usr_123" :: Text)
--- >>> ErrorDetails (42 :: Int)
--- >>> ErrorDetails (object ["field" .= ("email" :: Text)])
-data ErrorDetails = forall a. (ToJSON a, Show a, Typeable a) => ErrorDetails a
+-- >>> SomeErrorDetails ("usr_123" :: Text)
+-- >>> SomeErrorDetails (42 :: Int)
+-- >>> SomeErrorDetails (object ["field" .= ("email" :: Text)])
+data SomeErrorDetails = forall a. (ToJSON a, Show a, Typeable a) => SomeErrorDetails a
 
-instance Show ErrorDetails where
-  show (ErrorDetails a) = show a
+instance Show SomeErrorDetails where
+  show (SomeErrorDetails a) = show a
 
-instance ToJSON ErrorDetails where
-  toJSON (ErrorDetails a) = toJSON a
+instance ToJSON SomeErrorDetails where
+  toJSON (SomeErrorDetails a) = toJSON a
 
 -- | Contains the public-facing information about an application error.
 --
@@ -156,12 +156,12 @@ data PublicErrorInfo = PublicErrorInfo
     -- * Affected resource identifiers
     -- * Custom business logic data
     --
-    -- The existential 'ErrorDetails' wrapper preserves the original value type,
+    -- The existential 'SomeErrorDetails' wrapper preserves the original value type,
     -- allowing downstream code to recover the concrete type via 'Data.Typeable.cast'
     -- while still supporting JSON serialization.
     --
-    -- Example: @Just (ErrorDetails (object [\"resourceId\" .= (\"usr_123\" :: Text)]))@
-    details :: Maybe ErrorDetails
+    -- Example: @Just (SomeErrorDetails (object [\"resourceId\" .= (\"usr_123\" :: Text)]))@
+    details :: Maybe SomeErrorDetails
   }
   deriving (Show)
 
@@ -284,10 +284,10 @@ class HasErrorInfo e where
 
   -- | Optional details safe to share with callers. Defaults to 'Nothing'.
   --
-  -- Wrap your value with 'ErrorDetails' to store it:
+  -- Wrap your value with 'SomeErrorDetails' to store it:
   --
-  -- >>> errorDetails MyError = Just (ErrorDetails (object ["field" .= ("email" :: Text)]))
-  errorDetails :: e -> Maybe ErrorDetails
+  -- >>> errorDetails MyError = Just (SomeErrorDetails (object ["field" .= ("email" :: Text)]))
+  errorDetails :: e -> Maybe SomeErrorDetails
   errorDetails _ = Nothing
 
   -- | Severity level of the error. Defaults to 'Error'.

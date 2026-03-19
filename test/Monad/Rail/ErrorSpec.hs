@@ -29,7 +29,7 @@ instance HasErrorInfo TestError where
   errorPublicMessage TestErrorB = "Error B occurred"
   errorCode TestErrorA = "TestErrorA"
   errorCode TestErrorB = "TestErrorB"
-  errorDetails TestErrorB = Just (ErrorDetails (object ["key" .= ("value" :: Text)]))
+  errorDetails TestErrorB = Just (SomeErrorDetails (object ["key" .= ("value" :: Text)]))
   errorDetails _ = Nothing
   errorInternalMessage TestErrorA = Just "Internal details for A"
   errorInternalMessage _ = Nothing
@@ -118,43 +118,43 @@ spec = do
       it "serializes Critical as JSON string \"Critical\"" $
         toJSON Critical `shouldBe` String "Critical"
 
-  describe "ErrorDetails" $ do
+  describe "SomeErrorDetails" $ do
     describe "Show" $ do
       it "delegates to the wrapped value's Show instance" $
-        show (ErrorDetails ("hello" :: Text)) `shouldBe` show ("hello" :: Text)
+        show (SomeErrorDetails ("hello" :: Text)) `shouldBe` show ("hello" :: Text)
       it "shows numeric values" $
-        show (ErrorDetails (42 :: Int)) `shouldBe` "42"
+        show (SomeErrorDetails (42 :: Int)) `shouldBe` "42"
 
     describe "ToJSON" $ do
       it "serializes a Text value" $
-        toJSON (ErrorDetails ("hello" :: Text)) `shouldBe` String "hello"
+        toJSON (SomeErrorDetails ("hello" :: Text)) `shouldBe` String "hello"
       it "serializes a JSON object" $ do
         let obj = object ["key" .= ("val" :: Text)]
-        toJSON (ErrorDetails obj) `shouldBe` obj
+        toJSON (SomeErrorDetails obj) `shouldBe` obj
       it "serializes a numeric value" $
-        toJSON (ErrorDetails (42 :: Int)) `shouldBe` toJSON (42 :: Int)
+        toJSON (SomeErrorDetails (42 :: Int)) `shouldBe` toJSON (42 :: Int)
 
     describe "Typeable — type recovery via cast" $ do
       it "recovers the original type when cast matches" $ do
-        let ed = ErrorDetails ("hello" :: Text)
+        let ed = SomeErrorDetails ("hello" :: Text)
         case ed of
-          ErrorDetails a -> cast a `shouldBe` Just ("hello" :: Text)
+          SomeErrorDetails a -> cast a `shouldBe` Just ("hello" :: Text)
       it "returns Nothing when cast does not match" $ do
-        let ed = ErrorDetails ("hello" :: Text)
+        let ed = SomeErrorDetails ("hello" :: Text)
         case ed of
-          ErrorDetails a -> (cast a :: Maybe Int) `shouldBe` Nothing
+          SomeErrorDetails a -> (cast a :: Maybe Int) `shouldBe` Nothing
       it "recovers a complex type" $ do
         let val = [1, 2, 3] :: [Int]
-            ed = ErrorDetails val
+            ed = SomeErrorDetails val
         case ed of
-          ErrorDetails a -> cast a `shouldBe` Just ([1, 2, 3] :: [Int])
+          SomeErrorDetails a -> cast a `shouldBe` Just ([1, 2, 3] :: [Int])
 
     describe "round-trip through PublicErrorInfo" $ do
-      it "details wrapped in ErrorDetails serialize correctly in PublicErrorInfo JSON" $ do
+      it "details wrapped in SomeErrorDetails serialize correctly in PublicErrorInfo JSON" $ do
         let pub = PublicErrorInfo
               { publicMessage = "err",
                 code = "E1",
-                details = Just (ErrorDetails (object ["id" .= (1 :: Int)]))
+                details = Just (SomeErrorDetails (object ["id" .= (1 :: Int)]))
               }
         encode pub `shouldSatisfy` contains "\"id\":1"
       it "details Nothing produces no details key in JSON" $ do
@@ -164,11 +164,11 @@ spec = do
                 details = Nothing
               }
         encode pub `shouldSatisfy` notContains "details"
-      it "details with ErrorDetails is Just" $ do
+      it "details with SomeErrorDetails is Just" $ do
         let pub = PublicErrorInfo
               { publicMessage = "err",
                 code = "E1",
-                details = Just (ErrorDetails ("x" :: Text))
+                details = Just (SomeErrorDetails ("x" :: Text))
               }
         details pub `shouldSatisfy` isJust
 
@@ -195,7 +195,7 @@ spec = do
 
     describe "ToJSON — non-null optional fields are included" $ do
       it "includes 'details' when Just" $ do
-        let pubWithDetails = pub {details = Just (ErrorDetails (object ["resourceId" .= ("usr_1" :: Text)]))}
+        let pubWithDetails = pub {details = Just (SomeErrorDetails (object ["resourceId" .= ("usr_1" :: Text)]))}
         encode (toJSON pubWithDetails) `shouldSatisfy` contains "\"details\""
 
     describe "ToJSON — sensitive fields are absent" $ do

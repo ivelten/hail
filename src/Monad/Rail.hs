@@ -120,7 +120,7 @@ module Monad.Rail
 
     -- * Error types
     ErrorSeverity (..),
-    ErrorDetails (..),
+    SomeErrorDetails (..),
     PublicErrorInfo (..),
     InternalErrorInfo (..),
     HasErrorInfo (..),
