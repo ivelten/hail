@@ -1,5 +1,7 @@
 # monad-rail
 
+> **Note:** This is a vibe coded project for personal experience.
+
 [![Hackage](https://img.shields.io/hackage/v/monad-rail.svg)](https://hackage.haskell.org/package/monad-rail)
 [![License: BSD-3-Clause](https://img.shields.io/badge/License-BSD--3--Clause-blue.svg)](LICENSE)
 
